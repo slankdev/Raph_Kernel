@@ -34,6 +34,7 @@ bool Tonic::InitPCI(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, boo
     // create instance of Tonic
     Tonic *tonic = new(addr) Tonic(bus, device, mf);
     tonic->Setup();
+    tonic->SetupNetInterface();
 
     return true;
   } else {
