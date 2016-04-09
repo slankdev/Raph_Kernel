@@ -20,6 +20,8 @@
  * 
  */
 
+#include <mem/physmem.h>
+#include <mem/virtmem.h>
 #include <dev/tonic.h>
 #include <tty.h>
 #include <global.h>
@@ -50,6 +52,18 @@ void Tonic::Handle() {
 }
 
 void Tonic::Setup() {
+  // get PCI Base Address Registers
+  phys_addr bar = this->ReadReg<uint32_t>(PCICtrl::kBaseAddressReg0);
+  kassert((bar & 0xf) == 0);
+  phys_addr mmio_addr = bar & 0xfffffff0;
+  _mmioAddr = reinterpret_cast<uint32_t*>(p2v(mmio_addr));
+
+  // Enable BusMaster
+  this->WriteReg<uint16_t>(PCICtrl::kCommandReg, this->ReadReg<uint16_t>(PCICtrl::kCommandReg) | PCICtrl::kCommandRegBusMasterEnableFlag | (1 << 10));
+
+  // mmio test
+  _mmioAddr[0] = 0xdeadbeef;
+
   // TODO:
   // fetch MAC address
 
