@@ -26,17 +26,18 @@
 #define __RAPH_KERNEL_DEV_TONIC_H__
 
 #include <stdint.h>
+#include <spinlock.h>
 #include <polling.h>
 #include <dev/eth.h>
 
 struct TonicRxDesc {
-  uint64_t baseAddress;  /* address of buffer */
-  uint16_t packetLength; /*  */
+  uint64_t base_address;  /* address of buffer */
+  uint16_t packet_length; /* length */
 };
 
 struct TonicTxDesc {
-  uint64_t baseAddress;
-  uint16_t packetLength;
+  uint64_t base_address;
+  uint16_t packet_length;
 };
 
 class Tonic : public DevEthernet, Polling {
@@ -56,11 +57,41 @@ private:
   static const uint32_t kVendorId = 0x10ee; /* Xilinx */
   static const uint32_t kTonic    = 0x6024; /* ML605 */
 
+  SpinLock _lock;
+
   // Memory Mapped I/O Base Address
   volatile uint32_t *_mmioAddr = nullptr;
 
+  // Controller Register Space
+  static const uint32_t kRegCtrl   = 0x00 / sizeof(uint32_t);
+  static const uint32_t kRegHadr0  = 0x04 / sizeof(uint32_t);
+  static const uint32_t kRegHadr1  = 0x08 / sizeof(uint32_t);
+  static const uint32_t kRegPadr0  = 0x0c / sizeof(uint32_t);
+  static const uint32_t kRegPadr1  = 0x10 / sizeof(uint32_t);
+  static const uint32_t kRegPadr2  = 0x14 / sizeof(uint32_t);
+  static const uint32_t kRegPadr3  = 0x18 / sizeof(uint32_t);
+  static const uint32_t kRegTdba   = 0x1c / sizeof(uint32_t);
+  static const uint32_t kRegTdlen  = 0x24 / sizeof(uint32_t);
+  static const uint32_t kRegTdh    = 0x26 / sizeof(uint32_t);
+  static const uint32_t kRegTdt    = 0x28 / sizeof(uint32_t);
+  static const uint32_t kRegRdba   = 0x2c / sizeof(uint32_t);
+  static const uint32_t kRegRdlen  = 0x34 / sizeof(uint32_t);
+  static const uint32_t kRegRdh    = 0x36 / sizeof(uint32_t);
+  static const uint32_t kRegRdt    = 0x38 / sizeof(uint32_t);
+
+  // packet buffer
+  static const uint32_t kTxdescNumber = 128;
+  static const uint32_t kRxdescNumber = 128;
+  TonicTxDesc *_tx_desc_buf;
+  TonicRxDesc *_rx_desc_buf;
+
+  static const uint32_t kMaxFrameLength = 1518;
+
   // MAC address
   uint8_t _ethAddr[6];
+
+  void SetupRx();
+  void SetupTx();
 
   int32_t Receive(uint8_t *buffer, uint32_t size);
   int32_t Transmit(const uint8_t *packet, uint32_t length);

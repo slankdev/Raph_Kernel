@@ -58,6 +58,9 @@ PCICtrl *pci_ctrl;
 
 static uint32_t rnd_next = 1;
 
+#include <dev/tonic.h>
+Tonic *tonic;
+
 #include <dev/e1000/bem.h>
 bE1000 *eth;
 uint64_t cnt;
@@ -209,7 +212,7 @@ extern "C" int main_of_others() {
   // }
 
   
-  if (apic_ctrl->GetApicId() == 1) {
+  if (apic_ctrl->GetApicId() == 3) {
     static ARPSocket socket;
     if(socket.Open() < 0) {
       gtty->Printf("s", "[error] failed to open socket\n");
@@ -299,6 +302,23 @@ extern "C" int main_of_others() {
         }
       }, nullptr);
     tt.SetHandler(10);
+  } else if (apic_ctrl->GetApicId() == 1) {
+    if(tonic != nullptr) {
+      gtty->Printf("s", "[kernel] Tonic detected\n");
+    } else {
+      gtty->Printf("s", "[kernel] cannot detected Tonic\n");
+    }
+//
+//    Tonic::Packet *packet;
+//
+//    PollingFunc p;
+//    p.Init([](void *){
+//      if(tonic->ReceivePacket(packet)) {
+//        gtty->Printf("s", "[tonic] packet received!\n");
+//        tonic->ReuseRxBuffer(packet);
+//      }
+//    }, nullptr);
+//    p.Register();
   }
   while(true) {
     task_ctrl->Run();
