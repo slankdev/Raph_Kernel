@@ -35,9 +35,9 @@ bool Tonic::InitPCI(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, boo
     Tonic *addr = reinterpret_cast<Tonic*>(virtmem_ctrl->Alloc(sizeof(Tonic)));
 
     // create instance of Tonic
-    Tonic *tonic = new(addr) Tonic(bus, device, mf);
-    tonic->Setup();
-    tonic->SetupNetInterface();
+    Tonic *_tonic = new(addr) Tonic(bus, device, mf);
+    _tonic->Setup();
+    _tonic->SetupNetInterface();
 
     return true;
   } else {
@@ -84,7 +84,7 @@ void Tonic::Setup() {
   this->WriteReg<uint16_t>(PCICtrl::kCommandReg, this->ReadReg<uint16_t>(PCICtrl::kCommandReg) | PCICtrl::kCommandRegBusMasterEnableFlag | (1 << 10));
 
   // TODO: disable
-  WriteMmio<uint32_t*>(kRegCtrl, 0);
+  WriteMmio<uint32_t>(kRegCtrl, 0);
 
   // fetch MAC address
   _ethAddr[0] = (ReadMmio<uint32_t>(kRegHadr0)) & 0xff;
@@ -107,7 +107,10 @@ void Tonic::Setup() {
 
   // N.B. IP address write address
   uint8_t ipaddr[4] = {192, 168, 100, 165};
-  WriteMmio<uint32_t>(kRegPadr0, ipaddr[0] & (ipaddr[1] << 8) & (ipaddr[2] << 16) & (ipaddr[3] << 24));
+  WriteMmio<uint8_t>(kRegPadr0, ipaddr[0]);
+  WriteMmio<uint8_t>(kRegPadr0 + 1, ipaddr[1]);
+  WriteMmio<uint8_t>(kRegPadr0 + 2, ipaddr[2]);
+  WriteMmio<uint8_t>(kRegPadr0 + 3, ipaddr[3]);
   gtty->Printf("s", "[tonic] IP address is ",
       "d", ipaddr[0], "s", ".",
       "d", ipaddr[1], "s", ".",
@@ -115,7 +118,7 @@ void Tonic::Setup() {
       "d", ipaddr[3], "s", "\n");
 
   // TODO: enable
-  WriteMmio<uint32_t>(kRegCtrl, 0xdeadbeef);
+  WriteMmio<uint32_t>(kRegCtrl, 0xdeadbeefu);
 }
 
 void Tonic::SetupTx() {
@@ -125,7 +128,7 @@ void Tonic::SetupTx() {
   virt_addr tx_desc_buf_addr = ((virtmem_ctrl->Alloc(sizeof(TonicTxDesc) * kTxdescNumber + 15) + 15) / 16) * 16;
   _tx_desc_buf = reinterpret_cast<TonicTxDesc*>(tx_desc_buf_addr);
 
-  Write<uint64_t>(k2p(tx_desc_buf_addr));
+  WriteMmio<uint64_t>(kRegTdba, k2p(tx_desc_buf_addr));
 
   // N.B. debug
   gtty->Printf("s", "[tonic] TDBA = 0x", "x", reinterpret_cast<uint64_t>(_tx_desc_buf), "s", "\n");
@@ -155,12 +158,12 @@ void Tonic::SetupRx() {
   virt_addr rx_desc_buf_vaddr = p2v(rx_desc_buf_paddr);
   _rx_desc_buf = reinterpret_cast<TonicRxDesc*>(rx_desc_buf_vaddr);
 
-  Write<uint64_t>(kRegRdba, rx_desc_buf_paddr);
+  WriteMmio<uint64_t>(kRegRdba, rx_desc_buf_paddr);
 
   gtty->Printf("s", "[tonic] RDBA = 0x", "x", reinterpret_cast<uint64_t>(rx_desc_buf_paddr), "s", "\n");
 
   // set the size of the desc ring
-  WriteMmio<uint16_t>(kRegRdlen, kRxdescNumber * sizeof(TonicRxDesc);
+  WriteMmio<uint16_t>(kRegRdlen, kRxdescNumber * sizeof(TonicRxDesc));
 
   // set head and tail pointer of ring
   WriteMmio<uint16_t>(kRegRdh, 0);
@@ -198,10 +201,20 @@ int32_t Tonic::Receive(uint8_t *buffer, uint32_t size) {
     rxdesc = _rx_desc_buf + (rdt % kRxdescNumber);
     length = size < rxdesc->packet_length ? size : rxdesc->packet_length;
     memcpy(buffer, reinterpret_cast<uint8_t*>(p2v(rxdesc->base_address)), length);
-    Write<uint16_t>(kRegRdt, (rdt + 1) % kRxdescNumber);
+    WriteMmio<uint16_t>(kRegRdt, (rdt + 1) % kRxdescNumber);
 
     // N.B. test
-    gtty->Printf("s", "Tonic packet received;\n");
+    gtty->Printf("s", "[tonic] tx; ");
+//    gtty->Printf("x", buffer[0], "x", buffer[1], "s", " ",
+//                 "x", buffer[2], "x", buffer[3], "s", " ",
+//                 "x", buffer[4], "x", buffer[5], "s", " ",
+//                 "x", buffer[6], "x", buffer[7], "s", " ",
+//                 "x", buffer[8], "x", buffer[9], "s", " ",
+//                 "x", buffer[10], "x", buffer[11], "s", " ",
+//                 "x", buffer[12], "x", buffer[13], "s", " ",
+//                 "x", buffer[14], "x", buffer[15], "s", " ",
+//                 "x", buffer[16], "x", buffer[17], "s", " ",
+//                 "x", buffer[18], "x", buffer[19], "s", "\n");
     for(uint32_t i = 0; i < length; i++) {
       if(buffer[i] < 0x10) gtty->Printf("d", 0);
       gtty->Printf("x", buffer[i]);
