@@ -182,7 +182,7 @@ extern "C" int main() {
   }
   socket.SetIPAddr(inet_atoi(ip1));
 
-  kassert(eth != nullptr);
+  kassert(tonic != nullptr);
   Function func;
   func.Init([](void *){
       uint32_t ipaddr;
@@ -227,7 +227,7 @@ extern "C" int main() {
         }
       }
     }, nullptr);
-  eth->SetReceiveCallback(2, func);
+  tonic->SetReceiveCallback(2, func);
 
   extern int kKernelEndAddr;
   // stackは16K
@@ -308,9 +308,9 @@ extern "C" int main_of_others() {
           tt2.SetHandler(1000);
           return;
         }
-        kassert(eth != nullptr);
-        eth->UpdateLinkStatus();
-        if (eth->GetStatus() != bE1000::LinkStatus::Up) {
+        kassert(tonic != nullptr);
+        tonic->UpdateLinkStatus();
+        if (tonic->GetStatus() != Tonic::LinkStatus::Up) {
           tt2.SetHandler(1000);
           return;
         }

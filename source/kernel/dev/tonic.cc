@@ -84,15 +84,15 @@ void Tonic::Setup() {
   this->WriteReg<uint16_t>(PCICtrl::kCommandReg, this->ReadReg<uint16_t>(PCICtrl::kCommandReg) | PCICtrl::kCommandRegBusMasterEnableFlag | (1 << 10));
 
   // TODO: disable
-  _mmioAddr[kRegCtrl] = 0;
+  WriteMmio<uint32_t*>(kRegCtrl, 0);
 
   // fetch MAC address
-  _ethAddr[0] = (_mmioAddr[kRegHadr0]) & 0xff;
-  _ethAddr[1] = (_mmioAddr[kRegHadr0] >> 8) & 0xff;
-  _ethAddr[2] = (_mmioAddr[kRegHadr0] >> 16) & 0xff;
-  _ethAddr[3] = (_mmioAddr[kRegHadr0] >> 24) & 0xff;
-  _ethAddr[4] = (_mmioAddr[kRegHadr1]) & 0xff;
-  _ethAddr[5] = (_mmioAddr[kRegHadr1] >> 8) & 0xff;
+  _ethAddr[0] = (ReadMmio<uint32_t>(kRegHadr0)) & 0xff;
+  _ethAddr[1] = (ReadMmio<uint32_t>(kRegHadr0) >> 8) & 0xff;
+  _ethAddr[2] = (ReadMmio<uint32_t>(kRegHadr0) >> 16) & 0xff;
+  _ethAddr[3] = (ReadMmio<uint32_t>(kRegHadr0) >> 24) & 0xff;
+  _ethAddr[4] = (ReadMmio<uint32_t>(kRegHadr1)) & 0xff;
+  _ethAddr[5] = (ReadMmio<uint32_t>(kRegHadr1) >> 8) & 0xff;
 
   gtty->Printf("s", "[tonic] MAC address is ",
       "x", _ethAddr[0], "s", ":",
@@ -107,7 +107,7 @@ void Tonic::Setup() {
 
   // N.B. IP address write address
   uint8_t ipaddr[4] = {192, 168, 100, 165};
-  _mmioAddr[kRegPadr0] = ipaddr[0] & (ipaddr[1] << 8) & (ipaddr[2] << 16) & (ipaddr[3] << 24);
+  WriteMmio<uint32_t>(kRegPadr0, ipaddr[0] & (ipaddr[1] << 8) & (ipaddr[2] << 16) & (ipaddr[3] << 24));
   gtty->Printf("s", "[tonic] IP address is ",
       "d", ipaddr[0], "s", ".",
       "d", ipaddr[1], "s", ".",
@@ -115,7 +115,7 @@ void Tonic::Setup() {
       "d", ipaddr[3], "s", "\n");
 
   // TODO: enable
-  _mmioAddr[kRegCtrl] = 0xdeadbeef;
+  WriteMmio<uint32_t>(kRegCtrl, 0xdeadbeef);
 }
 
 void Tonic::SetupTx() {
@@ -125,18 +125,17 @@ void Tonic::SetupTx() {
   virt_addr tx_desc_buf_addr = ((virtmem_ctrl->Alloc(sizeof(TonicTxDesc) * kTxdescNumber + 15) + 15) / 16) * 16;
   _tx_desc_buf = reinterpret_cast<TonicTxDesc*>(tx_desc_buf_addr);
 
-  _mmioAddr[kRegTdba] = k2p(tx_desc_buf_addr) & 0xffffffff;
-  _mmioAddr[kRegTdba + 4] = k2p(tx_desc_buf_addr) >> 32;
+  Write<uint64_t>(k2p(tx_desc_buf_addr));
 
   // N.B. debug
   gtty->Printf("s", "[tonic] TDBA = 0x", "x", reinterpret_cast<uint64_t>(_tx_desc_buf), "s", "\n");
   
   // set the size of the desc ring
-  _mmioAddr[kRegTdlen] = kTxdescNumber * sizeof(TonicTxDesc);
+  WriteMmio<uint16_t>(kRegTdlen, kTxdescNumber * sizeof(TonicTxDesc));
 
   // set head and tail pointer of ring
-  _mmioAddr[kRegTdh] = 0;
-  _mmioAddr[kRegTdt] = 0;
+  WriteMmio<uint16_t>(kRegTdh, 0);
+  WriteMmio<uint16_t>(kRegTdt, 0);
 
   // initialize rx desc ring buffer
   for(uint32_t i = 0; i < kTxdescNumber; i++) {
@@ -156,17 +155,16 @@ void Tonic::SetupRx() {
   virt_addr rx_desc_buf_vaddr = p2v(rx_desc_buf_paddr);
   _rx_desc_buf = reinterpret_cast<TonicRxDesc*>(rx_desc_buf_vaddr);
 
-  _mmioAddr[kRegRdba] = rx_desc_buf_paddr & 0xffffffff;
-  _mmioAddr[kRegRdba + 4] = rx_desc_buf_paddr >> 32;
+  Write<uint64_t>(kRegRdba, rx_desc_buf_paddr);
 
   gtty->Printf("s", "[tonic] RDBA = 0x", "x", reinterpret_cast<uint64_t>(rx_desc_buf_paddr), "s", "\n");
 
   // set the size of the desc ring
-  _mmioAddr[kRegRdlen] = kRxdescNumber * sizeof(TonicRxDesc);
+  WriteMmio<uint16_t>(kRegRdlen, kRxdescNumber * sizeof(TonicRxDesc);
 
   // set head and tail pointer of ring
-  _mmioAddr[kRegRdh] = 0;
-  _mmioAddr[kRegRdt] = kRxdescNumber;
+  WriteMmio<uint16_t>(kRegRdh, 0);
+  WriteMmio<uint16_t>(kRegRdt, kRxdescNumber);
 
   // initialize rx desc ring buffer
   for(uint32_t i = 0; i < kRxdescNumber; i++) {
@@ -190,8 +188,8 @@ void Tonic::UpdateLinkStatus() {
 
 int32_t Tonic::Receive(uint8_t *buffer, uint32_t size) {
   TonicRxDesc *rxdesc;
-  uint32_t rdh = _mmioAddr[kRegRdh];
-  uint32_t rdt = _mmioAddr[kRegRdt];
+  uint32_t rdh = ReadMmio<uint16_t>(kRegRdh);
+  uint32_t rdt = ReadMmio<uint16_t>(kRegRdt);
   uint32_t length;
   int rx_available = (kRxdescNumber - rdt + rdh) % kRxdescNumber;
 
@@ -200,7 +198,7 @@ int32_t Tonic::Receive(uint8_t *buffer, uint32_t size) {
     rxdesc = _rx_desc_buf + (rdt % kRxdescNumber);
     length = size < rxdesc->packet_length ? size : rxdesc->packet_length;
     memcpy(buffer, reinterpret_cast<uint8_t*>(p2v(rxdesc->base_address)), length);
-    _mmioAddr[kRegRdt] = (rdt + 1) % kRxdescNumber;
+    Write<uint16_t>(kRegRdt, (rdt + 1) % kRxdescNumber);
 
     // N.B. test
     gtty->Printf("s", "Tonic packet received;\n");
@@ -222,8 +220,8 @@ int32_t Tonic::Receive(uint8_t *buffer, uint32_t size) {
 
 int32_t Tonic::Transmit(const uint8_t *packet, uint32_t length) {
   TonicTxDesc *txdesc;
-  uint32_t tdh = _mmioAddr[kRegTdh];
-  uint32_t tdt = _mmioAddr[kRegTdt];
+  uint32_t tdh = ReadMmio<uint16_t>(kRegTdh);
+  uint32_t tdt = ReadMmio<uint16_t>(kRegTdt);
   int tx_available = kTxdescNumber - ((kTxdescNumber - tdh + tdt) % kTxdescNumber);
 
   if(tx_available > 0) {
@@ -231,7 +229,7 @@ int32_t Tonic::Transmit(const uint8_t *packet, uint32_t length) {
     txdesc = _tx_desc_buf + (tdt % kTxdescNumber);
     memcpy(reinterpret_cast<uint8_t*>(p2v(txdesc->base_address)), packet, length);
     txdesc->packet_length = length;
-    _mmioAddr[kRegTdt] = (tdt + 1) % kTxdescNumber;
+    WriteMmio<uint16_t>(kRegTdt, (tdt + 1) % kTxdescNumber);
     return length;
   } else {
     return -1;
