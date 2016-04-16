@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2016 Project Raphine
+ * Copyright (c) 2016 Raphine Project
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -16,26 +16,35 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  *
- * Author: Levelfour
+ * Author: Liva
  * 
  */
 
-#ifndef __RAPH_KERNEL_NET_ETH_H__
-#define __RAPH_KERNEL_NET_ETH_H__
+#include <queue.h>
+#include <global.h>
+#include <mem/tmpmem.h>
 
-#include <stdint.h>
-#include <dev/netdev.h>
+void Queue::Push(void *data) {
+  Locker locker(_lock);
+  Container *c = reinterpret_cast<Container *>(tmpmem_ctrl->Alloc(sizeof(Container)));
+  kassert(_last->next == nullptr);
+  _last->next = c;
+  _last = c;
+  c->data = data;
+  c->next = nullptr;
+}
 
-struct EthHeader {
-  // destination MAC address
-  uint8_t daddr[6];
-  // source MAC address
-  uint8_t saddr[6];
-  // protocol type
-  uint16_t type;
-};
-
-int32_t EthGenerateHeader(uint8_t *buffer, uint8_t *saddr, uint8_t *daddr, uint16_t type);
-bool EthFilterPacket(uint8_t *packet, uint8_t *saddr, uint8_t *daddr, uint16_t type);
-
-#endif // __RAPH_KERNEL_NET_ETH_H__
+bool Queue::Pop(void *&data) {
+  Locker locker(_lock);
+  if (IsEmpty()) {
+    return false;
+  }
+  Container *c = _first.next;
+  kassert(c != nullptr);
+  data = c->data;
+  _first.next = c->next;
+  if (_last == c) {
+    _last = &_first;
+  }
+  return true;
+}

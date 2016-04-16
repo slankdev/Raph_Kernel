@@ -32,12 +32,14 @@ class MultibootCtrl;
 class PagingCtrl;
 class PhysmemCtrl;
 class VirtmemCtrl;
+class TmpmemCtrl;
 class TaskCtrl;
 class Gdt;
 class Idt;
 
 class Tty;
 class Timer;
+class Keyboard;
 
 class PCICtrl;
 
@@ -50,12 +52,15 @@ extern MultibootCtrl *multiboot_ctrl;
 extern PagingCtrl *paging_ctrl;
 extern PhysmemCtrl *physmem_ctrl;
 extern VirtmemCtrl *virtmem_ctrl;
+extern TmpmemCtrl *tmpmem_ctrl;
 extern TaskCtrl *task_ctrl;
 extern Gdt *gdt;
 extern Idt *idt;
 
+
 extern Tty *gtty;
 extern Timer *timer;
+extern Keyboard *keyboard;
 
 extern PCICtrl *pci_ctrl;
 
@@ -68,24 +73,7 @@ class DevEthernetCtrl;
 extern DevEthernetCtrl *netdev_ctrl;
 
 // ARP Table
-class ARPTable;
-extern ARPTable *arp_table;
-
-// L2Ctrl
-class EthCtrl;
-extern EthCtrl *eth_ctrl;
-
-class ARPCtrl;
-extern ARPCtrl *arp_ctrl;
-
-// L3Ctrl
-class IPCtrl;
-extern IPCtrl *ip_ctrl;
-
-// L4Ctrl
-class UDPCtrl;
-class TCPCtrl;
-extern UDPCtrl *udp_ctrl;
-extern TCPCtrl *tcp_ctrl;
+class ArpTable;
+extern ArpTable *arp_table;
 
 #endif // __RAPH_KERNEL_GLOBAL_H__
