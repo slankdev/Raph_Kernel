@@ -87,6 +87,7 @@ Callout tt2;
 #define IP2 10, 0, 2, 15
 #endif
 
+// FLAG==1: TCP client; FLAG==2: TCP server;
 uint8_t ip1[] = {IP1};
 uint8_t ip2[] = {IP2};
 
@@ -173,58 +174,46 @@ extern "C" int main() {
 
   gtty->Init();
 
-  static ArpSocket socket;
-  if(socket.Open() < 0) {
-    gtty->Printf("s", "[error] failed to open socket\n");
-  }
-  socket.SetIPAddr(inet_atoi(ip1));
+  if (FLAG == 1) {
+    gtty->Printf("s", "[kernel] launch TCP client\n");
+  } else if (FLAG == 2) {
+    gtty->Printf("s", "[kernel] launch TCP server\n");
 
-  kassert(eth != nullptr);
-  Function func;
-  func.Init([](void *){
-      uint32_t ipaddr;
-      uint8_t macaddr[6];
+    static Socket socket;
+    if(socket.Open() < 0) {
+      gtty->Printf("s", "[error] failed to open socket\n");
+    }
+    socket.SetIPAddr(inet_atoi(ip1));
+    socket.SetPort(Socket::kPortHTTP);
+    socket.SetListenAddr(inet_atoi(ip2));
+    socket.SetListenPort(Socket::kPortHTTP);
 
-      int32_t rval = socket.ReceivePacket(0, &ipaddr, macaddr);
+    static const uint32_t size = Socket::kMSS;
+    static uint8_t data[size];
+    static bool end = false;
 
-      if(rval == ArpSocket::kOpARPReply) {
-        uint64_t l = ((uint64_t)(timer->ReadMainCnt() - cnt) * (uint64_t)timer->GetCntClkPeriod()) / 1000;
-        cnt = 0;
-        gtty->Printf(
-          "s", "[arp] reply received; ",
-          "x", macaddr[0], "s", ":",
-          "x", macaddr[1], "s", ":",
-          "x", macaddr[2], "s", ":",
-          "x", macaddr[3], "s", ":",
-          "x", macaddr[4], "s", ":",
-          "x", macaddr[5], "s", " is ",
-          "d", (ipaddr >> 24) & 0xff, "s", ".",
-          "d", (ipaddr >> 16) & 0xff, "s", ".",
-          "d", (ipaddr >> 8) & 0xff, "s", ".",
-          "d", (ipaddr >> 0) & 0xff, "s", " (");
-        gtty->Printf("s", "latency:", "d", l, "s", "us)\n");
-      } else if(rval == ArpSocket::kOpARPRequest) {
-        gtty->Printf(
-            "s", "[arp] request received; ",
-            "x", macaddr[0], "s", ":",
-            "x", macaddr[1], "s", ":",
-            "x", macaddr[2], "s", ":",
-            "x", macaddr[3], "s", ":",
-            "x", macaddr[4], "s", ":",
-            "x", macaddr[5], "s", " is ",
-            "d", (ipaddr >> 24) & 0xff, "s", ".",
-            "d", (ipaddr >> 16) & 0xff, "s", ".",
-            "d", (ipaddr >> 8) & 0xff, "s", ".",
-            "d", (ipaddr >> 0) & 0xff, "s", "\n");
+    Function func;
+    func.Init([](void *){
+        if(!end) {
+          int32_t listen_rval = socket.Listen();
 
-        if(socket.TransmitPacket(ArpSocket::kOpARPReply, ipaddr, macaddr) >= 0) {
-          gtty->Printf("s", "[arp] reply sent\n");
-        } else {
-          gtty->Printf("s", "[arp] failed to sent ARP reply\n");
+          if (listen_rval >= 0) {
+            gtty->Printf("s", "[server] connection established\n");
+          } else if (listen_rval == Socket::kResultAlreadyEstablished) {
+            int32_t rval = socket.ReceivePacket(data, size);
+            if(rval >= 0) {
+              data[rval-1] = 0;
+              gtty->Printf("s", "[server] received ", "d", rval, "s", "[B];\n");
+//              gtty->Printf("s", reinterpret_cast<const char *>(data), "s", "\n");
+            } else if (rval == Socket::kResultConnectionClosed) {
+              gtty->Printf("s", "[server] connection closed\n");
+              end = true;
+            }
+          }
         }
-      }
-    }, nullptr);
-  eth->SetReceiveCallback(2, func);
+      }, nullptr);
+    eth->SetReceiveCallback(2, func);
+  }
 
   extern int kKernelEndAddr;
   // stackは16K
@@ -272,39 +261,32 @@ extern "C" int main_of_others() {
 
   gtty->Printf("s", "[cpu] info: #", "d", apic_ctrl->GetApicId(), "s", " started.\n");
 
-  // ループ性能測定用
-  // if (apic_ctrl->GetApicId() == 4) {
-  //   PollingFunc p;
-  //   static int hoge = 0;
-  //   p.Init([](void *){
-  //       int hoge2 = timer->GetUsecFromCnt(timer->ReadMainCnt()) - hoge;
-  //       gtty->Printf("d",hoge2,"s"," ");
-  //       hoge = timer->GetUsecFromCnt(timer->ReadMainCnt());
-  //     }, nullptr);
-  //   p.Register();
-  // }
-
-  // ワンショット性能測定用
-  if (apic_ctrl->GetApicId() == 5) {
-    new(&tt1) Callout;
-    tt1.Init([](void *){
-        if (!apic_ctrl->IsBootupAll()) {
-          tt1.SetHandler(1000);
-          return;
-        }
-      }, nullptr);
-    tt1.SetHandler(10);
-  }
-
-  if (apic_ctrl->GetApicId() == 3) {
-    cnt = 0;
+  if (apic_ctrl->GetApicId() == 3 && FLAG == 1) {
+    static Socket socket;
+    if(socket.Open() < 0) {
+      gtty->Printf("s", "[error] failed to open socket\n");
+    }
+    socket.SetIPAddr(inet_atoi(ip1));
+    socket.SetPort(Socket::kPortHTTP);
+    socket.SetListenAddr(inet_atoi(ip2));
+    socket.SetListenPort(Socket::kPortHTTP);
+  
+    static bool end = false;
+    static const uint32_t size = 8000;
+    static uint8_t data[size];
+    static uint32_t sent_length = 0;
+    static uint32_t remain_length = size;
+    static uint8_t *ptr_data = data;
+    memset(data, 0x41, size-1);
+    data[size-1] = 0;
+  
     new(&tt2) Callout;
-    time = 10;
     tt2.Init([](void *){
         if (!apic_ctrl->IsBootupAll()) {
           tt2.SetHandler(1000);
           return;
         }
+        apic_ctrl->SendIpi(3);
         kassert(eth != nullptr);
         eth->UpdateLinkStatus();
         if (eth->GetStatus() != bE1000::LinkStatus::Up) {
@@ -316,26 +298,33 @@ extern "C" int main_of_others() {
           return;
         }
 
-        ArpSocket socket;
-        if(socket.Open() < 0) {
-          gtty->Printf("s", "[error] failed to open socket\n");
-        } else {
-          socket.SetIPAddr(inet_atoi(ip1));
-          cnt = timer->ReadMainCnt();
-          if(socket.TransmitPacket(ArpSocket::kOpARPRequest, inet_atoi(ip2), nullptr) < 0) {
-            gtty->Printf("s", "[arp] failed to transmit request\n");
+        int32_t connect_rval = socket.Connect();
+
+        if (connect_rval >= 0) {
+          gtty->Printf("s", "[client] connection established\n");
+        } else if (connect_rval == Socket::kResultAlreadyEstablished) {
+          if (sent_length < size) {
+            int32_t rval = socket.TransmitPacket(ptr_data, remain_length);
+
+            if (rval >= 0) {
+              ptr_data += rval;
+              remain_length -= rval;
+              sent_length += rval;
+              gtty->Printf("s", "[client] sent ", "d", rval, "s", "[B]\n");
+            }
           } else {
-            gtty->Printf("s", "[arp] request sent\n");
+            gtty->Printf("s", "[client] transmission complete\n");
+            socket.Close();
+            gtty->Printf("s", "[client] connection closed\n");
+            end = true;
           }
         }
 
-        time--;
-        if (time != 0) {
-          tt2.SetHandler(3000);
-        }
+        if(!end) tt2.SetHandler(10);
       }, nullptr);
     tt2.SetHandler(10);
   }
+
   task_ctrl->Run();
   return 0;
 }

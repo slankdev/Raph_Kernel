@@ -115,7 +115,8 @@ int32_t Socket::Transmit(const uint8_t *data, uint32_t length, bool is_raw_packe
 
     // Ethernet header
     uint8_t eth_saddr[6];
-    uint8_t eth_daddr[6] = {0x08, 0x00, 0x27, 0xc1, 0x5b, 0x93}; // TODO:
+    uint8_t eth_daddr[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+//    uint8_t eth_daddr[6] = {0x08, 0x00, 0x27, 0xc1, 0x5b, 0x93}; // TODO:
     _dev->GetEthAddr(eth_saddr);
 //    GetEthAddr(_daddr, eth_daddr);
     L2Tx(packet->buf, eth_saddr, eth_daddr, kProtocolIPv4);
@@ -124,6 +125,11 @@ int32_t Socket::Transmit(const uint8_t *data, uint32_t length, bool is_raw_packe
   // transmit
   _dev->TransmitPacket(packet);
   int32_t sent_length = packet->len;
+
+//  for(uint32_t i = 0; i < packet->len; i++) {
+//    gtty->Printf("s", packet->buf[i]<0x10?"0":"", "x", packet->buf[i], "s", i%16==15?"\n":(i%2==1?" ":""));
+//  }
+//  gtty->Printf("s", "\n");
 
   return (sent_length < 0 || is_raw_packet) ? sent_length : sent_length - (L2HeaderLength() + L3HeaderLength() + L4HeaderLength());
 }
@@ -227,6 +233,11 @@ int32_t Socket::Receive(uint8_t *data, uint32_t length, bool is_raw_packet, bool
     _dev->ReuseRxBuffer(packet);
     return kErrorInvalidPacketOnWire;
   }
+
+//  for(uint32_t i = 0; i < packet->len; i++) {
+//    gtty->Printf("s", packet->buf[i]<0x10?"0":"", "x", packet->buf[i], "s", i%16==15?"\n":(i%2==1?" ":""));
+//  }
+//  gtty->Printf("s", "\n");
 
   // filter TCP port
   uint32_t offset_l4 = L2HeaderLength() + L3HeaderLength();
