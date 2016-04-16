@@ -26,6 +26,7 @@
 #define __RAPH_KERNEL_DEV_TONIC_H__
 
 #include <stdint.h>
+#include <global.h>
 #include <spinlock.h>
 #include <polling.h>
 #include <dev/eth.h>
@@ -33,12 +34,12 @@
 struct TonicRxDesc {
   uint64_t base_address;  /* address of buffer */
   uint16_t packet_length; /* length */
-};
+} __attribute__ ((packed));
 
 struct TonicTxDesc {
-  uint64_t base_address;
-  uint16_t packet_length;
-};
+  uint64_t base_address;  /* address of buffer */
+  uint16_t packet_length; /* length */
+} __attribute__ ((packed));
 
 class Tonic : public DevEthernet, Polling {
 public:
@@ -63,21 +64,21 @@ private:
   volatile uint32_t *_mmioAddr = nullptr;
 
   // Controller Register Space
-  static const uint32_t kRegCtrl   = 0x00 / sizeof(uint32_t);
-  static const uint32_t kRegHadr0  = 0x04 / sizeof(uint32_t);
-  static const uint32_t kRegHadr1  = 0x08 / sizeof(uint32_t);
-  static const uint32_t kRegPadr0  = 0x0c / sizeof(uint32_t);
-  static const uint32_t kRegPadr1  = 0x10 / sizeof(uint32_t);
-  static const uint32_t kRegPadr2  = 0x14 / sizeof(uint32_t);
-  static const uint32_t kRegPadr3  = 0x18 / sizeof(uint32_t);
-  static const uint32_t kRegTdba   = 0x1c / sizeof(uint32_t);
-  static const uint32_t kRegTdlen  = 0x24 / sizeof(uint32_t);
-  static const uint32_t kRegTdh    = 0x26 / sizeof(uint32_t);
-  static const uint32_t kRegTdt    = 0x28 / sizeof(uint32_t);
-  static const uint32_t kRegRdba   = 0x2c / sizeof(uint32_t);
-  static const uint32_t kRegRdlen  = 0x34 / sizeof(uint32_t);
-  static const uint32_t kRegRdh    = 0x36 / sizeof(uint32_t);
-  static const uint32_t kRegRdt    = 0x38 / sizeof(uint32_t);
+  static const uint32_t kRegCtrl   = 0x00;
+  static const uint32_t kRegHadr0  = 0x04;
+  static const uint32_t kRegHadr1  = 0x08;
+  static const uint32_t kRegPadr0  = 0x0c;
+  static const uint32_t kRegPadr1  = 0x10;
+  static const uint32_t kRegPadr2  = 0x14;
+  static const uint32_t kRegPadr3  = 0x18;
+  static const uint32_t kRegTdba   = 0x1c;
+  static const uint32_t kRegTdh    = 0x24;
+  static const uint32_t kRegTdt    = 0x26;
+  static const uint32_t kRegTdlen  = 0x28;
+  static const uint32_t kRegRdba   = 0x2c;
+  static const uint32_t kRegRdh    = 0x34;
+  static const uint32_t kRegRdt    = 0x36;
+  static const uint32_t kRegRdlen  = 0x38;
 
   // packet buffer
   static const uint32_t kTxdescNumber = 128;
@@ -98,12 +99,12 @@ private:
 
   template<class T>
     void WriteMmio(uint32_t offset, T data) {
-    *reinterpret_cast<volatile T*>(_mmioAddr + offset) = data;
+    *(reinterpret_cast<volatile T*>(_mmioAddr) + offset / sizeof(T)) = data;
   }
 
   template<class T>
     T ReadMmio(uint32_t offset) {
-    return *reinterpret_cast<volatile T*>(_mmioAddr + offset);
+    return *(reinterpret_cast<volatile T*>(_mmioAddr) + offset / sizeof(T));
   }
 
   // software reset

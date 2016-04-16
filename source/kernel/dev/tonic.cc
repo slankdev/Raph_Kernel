@@ -109,15 +109,15 @@ void Tonic::Setup() {
 
   // N.B. IP address write address
   uint8_t ipaddr[4] = {192, 168, 100, 165};
-  WriteMmio<uint8_t>(kRegPadr0, ipaddr[0]);
-  WriteMmio<uint8_t>(kRegPadr0 + 1, ipaddr[1]);
-  WriteMmio<uint8_t>(kRegPadr0 + 2, ipaddr[2]);
-  WriteMmio<uint8_t>(kRegPadr0 + 3, ipaddr[3]);
+  WriteMmio<uint32_t>(kRegPadr0, ipaddr[0] | (ipaddr[1] << 8) | (ipaddr[2] << 16) | (ipaddr[3] << 24));
   gtty->Printf("s", "[tonic] IP address is ",
       "d", ipaddr[0], "s", ".",
       "d", ipaddr[1], "s", ".",
       "d", ipaddr[2], "s", ".",
       "d", ipaddr[3], "s", "\n");
+
+  uint32_t ipaddr2 = ReadMmio<uint32_t>(kRegPadr0);
+  gtty->Printf("s", "[tonic] ReadMmio(kRegPadr0) = ", "x", ipaddr2, "s", "\n");
 
   // TODO: enable
   WriteMmio<uint32_t>(kRegCtrl, 0xdeadbeefu);
@@ -130,17 +130,20 @@ void Tonic::SetupTx() {
   virt_addr tx_desc_buf_addr = ((virtmem_ctrl->Alloc(sizeof(TonicTxDesc) * kTxdescNumber + 15) + 15) / 16) * 16;
   _tx_desc_buf = reinterpret_cast<TonicTxDesc*>(tx_desc_buf_addr);
 
-  WriteMmio<uint64_t>(kRegTdba, k2p(tx_desc_buf_addr));
+  // Warning: root complex discard 64bit-width data, so you must split
+  //          64bit data to 32bit
+  WriteMmio<uint32_t>(kRegTdba, k2p(tx_desc_buf_addr) & 0xffffffff);
+  WriteMmio<uint32_t>(kRegTdba + 4, (k2p(tx_desc_buf_addr) >> 32));
 
   // N.B. debug
-  gtty->Printf("s", "[tonic] TDBA = 0x", "x", reinterpret_cast<uint64_t>(_tx_desc_buf), "s", "\n");
-  
-  // set the size of the desc ring
-  WriteMmio<uint16_t>(kRegTdlen, kTxdescNumber * sizeof(TonicTxDesc));
+  gtty->Printf("s", "[tonic] TDBA = 0x", "x", reinterpret_cast<uint64_t>(k2p(tx_desc_buf_addr)), "s", "\n");
 
   // set head and tail pointer of ring
   WriteMmio<uint16_t>(kRegTdh, 0);
   WriteMmio<uint16_t>(kRegTdt, 0);
+  
+  // set the size of the desc ring
+  WriteMmio<uint16_t>(kRegTdlen, kTxdescNumber * sizeof(TonicTxDesc));
 
   // initialize rx desc ring buffer
   for(uint32_t i = 0; i < kTxdescNumber; i++) {
@@ -160,16 +163,19 @@ void Tonic::SetupRx() {
   virt_addr rx_desc_buf_vaddr = p2v(rx_desc_buf_paddr);
   _rx_desc_buf = reinterpret_cast<TonicRxDesc*>(rx_desc_buf_vaddr);
 
-  WriteMmio<uint64_t>(kRegRdba, rx_desc_buf_paddr);
+  // Warning: root complex discard 64bit-width data, so you must split
+  //          64bit data to 32bit
+  WriteMmio<uint32_t>(kRegRdba, rx_desc_buf_paddr & 0xffffffff);
+  WriteMmio<uint32_t>(kRegRdba + 4, rx_desc_buf_paddr >> 32);
 
   gtty->Printf("s", "[tonic] RDBA = 0x", "x", reinterpret_cast<uint64_t>(rx_desc_buf_paddr), "s", "\n");
 
-  // set the size of the desc ring
-  WriteMmio<uint16_t>(kRegRdlen, kRxdescNumber * sizeof(TonicRxDesc));
-
   // set head and tail pointer of ring
   WriteMmio<uint16_t>(kRegRdh, 0);
-  WriteMmio<uint16_t>(kRegRdt, kRxdescNumber);
+  WriteMmio<uint16_t>(kRegRdt, 0);
+
+  // set the size of the desc ring
+  WriteMmio<uint16_t>(kRegRdlen, kRxdescNumber * sizeof(TonicRxDesc));
 
   // initialize rx desc ring buffer
   for(uint32_t i = 0; i < kRxdescNumber; i++) {
@@ -199,6 +205,7 @@ int32_t Tonic::Receive(uint8_t *buffer, uint32_t size) {
   int rx_available = (kRxdescNumber - rdt + rdh) % kRxdescNumber;
 
   if(rx_available > 0) {
+
     // if the packet is on the wire
     rxdesc = _rx_desc_buf + (rdt % kRxdescNumber);
     length = size < rxdesc->packet_length ? size : rxdesc->packet_length;
@@ -206,25 +213,25 @@ int32_t Tonic::Receive(uint8_t *buffer, uint32_t size) {
     WriteMmio<uint16_t>(kRegRdt, (rdt + 1) % kRxdescNumber);
 
     // N.B. test
-    gtty->Printf("s", "[tonic] tx; ");
-//    gtty->Printf("x", buffer[0], "x", buffer[1], "s", " ",
-//                 "x", buffer[2], "x", buffer[3], "s", " ",
-//                 "x", buffer[4], "x", buffer[5], "s", " ",
-//                 "x", buffer[6], "x", buffer[7], "s", " ",
-//                 "x", buffer[8], "x", buffer[9], "s", " ",
-//                 "x", buffer[10], "x", buffer[11], "s", " ",
-//                 "x", buffer[12], "x", buffer[13], "s", " ",
-//                 "x", buffer[14], "x", buffer[15], "s", " ",
-//                 "x", buffer[16], "x", buffer[17], "s", " ",
-//                 "x", buffer[18], "x", buffer[19], "s", "\n");
-    for(uint32_t i = 0; i < length; i++) {
-      if(buffer[i] < 0x10) gtty->Printf("d", 0);
-      gtty->Printf("x", buffer[i]);
-      if((i+1) % 16 == 0) gtty->Printf("s", "\n");
-      else if((i+1) % 16 == 8) gtty->Printf("s", ":");
-      else gtty->Printf("s", " ");
-    }
-    gtty->Printf("s", "\n");
+    gtty->Printf("s", "[tonic] rx; length = ", "d", rxdesc->packet_length, "s", ";\n");
+    gtty->Printf("x", buffer[0], "x", buffer[1], "s", " ",
+                 "x", buffer[2], "x", buffer[3], "s", " ",
+                 "x", buffer[4], "x", buffer[5], "s", " ",
+                 "x", buffer[6], "x", buffer[7], "s", " ",
+                 "x", buffer[8], "x", buffer[9], "s", " ",
+                 "x", buffer[10], "x", buffer[11], "s", " ",
+                 "x", buffer[12], "x", buffer[13], "s", " ",
+                 "x", buffer[14], "x", buffer[15], "s", " ",
+                 "x", buffer[16], "x", buffer[17], "s", " ",
+                 "x", buffer[18], "x", buffer[19], "s", "\n");
+//    for(uint32_t i = 0; i < length; i++) {
+//      if(buffer[i] < 0x10) gtty->Printf("d", 0);
+//      gtty->Printf("x", buffer[i]);
+//      if((i+1) % 16 == 0) gtty->Printf("s", "\n");
+//      else if((i+1) % 16 == 8) gtty->Printf("s", ":");
+//      else gtty->Printf("s", " ");
+//    }
+//    gtty->Printf("s", "\n");
     // ^ test end
 
     return length;
@@ -244,7 +251,7 @@ int32_t Tonic::Transmit(const uint8_t *packet, uint32_t length) {
     txdesc = _tx_desc_buf + (tdt % kTxdescNumber);
     memcpy(reinterpret_cast<uint8_t*>(p2v(txdesc->base_address)), packet, length);
     txdesc->packet_length = length;
-    WriteMmio<uint16_t>(kRegTdt, (tdt + 1) % kTxdescNumber);
+    WriteMmio<uint16_t>(kRegTdh, (tdh + 1) % kTxdescNumber);
     return length;
   } else {
     return -1;
