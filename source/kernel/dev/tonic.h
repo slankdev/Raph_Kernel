@@ -97,12 +97,12 @@ private:
   int32_t Transmit(const uint8_t *packet, uint32_t length);
 
   template<class T>
-    void WriteMmio(uint32_t offset, uint16_t data) {
+    void WriteMmio(uint32_t offset, T data) {
     *reinterpret_cast<volatile T*>(_mmioAddr + offset) = data;
   }
 
   template<class T>
-    uint16_t ReadMmio(uint32_t offset) {
+    T ReadMmio(uint32_t offset) {
     return *reinterpret_cast<volatile T*>(_mmioAddr + offset);
   }
 

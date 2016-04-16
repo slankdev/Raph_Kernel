@@ -87,12 +87,14 @@ void Tonic::Setup() {
   WriteMmio<uint32_t>(kRegCtrl, 0);
 
   // fetch MAC address
-  _ethAddr[0] = (ReadMmio<uint32_t>(kRegHadr0)) & 0xff;
-  _ethAddr[1] = (ReadMmio<uint32_t>(kRegHadr0) >> 8) & 0xff;
-  _ethAddr[2] = (ReadMmio<uint32_t>(kRegHadr0) >> 16) & 0xff;
-  _ethAddr[3] = (ReadMmio<uint32_t>(kRegHadr0) >> 24) & 0xff;
-  _ethAddr[4] = (ReadMmio<uint32_t>(kRegHadr1)) & 0xff;
-  _ethAddr[5] = (ReadMmio<uint32_t>(kRegHadr1) >> 8) & 0xff;
+  uint32_t hadr0 = ReadMmio<uint32_t>(kRegHadr0);
+  uint32_t hadr1 = ReadMmio<uint32_t>(kRegHadr1);
+  _ethAddr[0] = (hadr0) & 0xff;
+  _ethAddr[1] = (hadr0 >> 8) & 0xff;
+  _ethAddr[2] = (hadr0 >> 16) & 0xff;
+  _ethAddr[3] = (hadr0 >> 24) & 0xff;
+  _ethAddr[4] = (hadr1) & 0xff;
+  _ethAddr[5] = (hadr1 >> 8) & 0xff;
 
   gtty->Printf("s", "[tonic] MAC address is ",
       "x", _ethAddr[0], "s", ":",
