@@ -175,9 +175,23 @@ extern "C" int main() {
   gtty->Init();
 
   if (FLAG == 1) {
-    gtty->Printf("s", "[kernel] launch TCP client\n");
+    gtty->Printf("s", "[kernel] launch TCP client (IP address : ",
+        "d", ip1[0], "s", ".", "d", ip1[1], "s", ".",
+        "d", ip1[2], "s", ".", "d", ip1[3], "s", ")\n");
   } else if (FLAG == 2) {
-    gtty->Printf("s", "[kernel] launch TCP server\n");
+    gtty->Printf("s", "[kernel] launch TCP server (IP address : ",
+        "d", ip1[0], "s", ".", "d", ip1[1], "s", ".",
+        "d", ip1[2], "s", ".", "d", ip1[3], "s", ")\n");
+
+    static ArpSocket arpsocket;
+    if(arpsocket.Open() < 0) {
+      gtty->Printf("s", "[error] failed to open socket\n");
+    }
+    arpsocket.SetIPAddr(inet_atoi(ip1));
+  
+    // for ARP
+    static uint32_t ipaddr;
+    static uint8_t macaddr[6];
 
     static Socket socket;
     if(socket.Open() < 0) {
@@ -194,6 +208,44 @@ extern "C" int main() {
 
     Function func;
     func.Init([](void *){
+        // handle ARP
+        int32_t arp_rval = arpsocket.ReceivePacket(0, &ipaddr, macaddr);
+  
+        if(arp_rval == ArpSocket::kOpARPReply) {
+          gtty->Printf(
+            "s", "[arp] reply received; ",
+            "x", macaddr[0], "s", ":",
+            "x", macaddr[1], "s", ":",
+            "x", macaddr[2], "s", ":",
+            "x", macaddr[3], "s", ":",
+            "x", macaddr[4], "s", ":",
+            "x", macaddr[5], "s", " is ",
+            "d", (ipaddr >> 24) & 0xff, "s", ".",
+            "d", (ipaddr >> 16) & 0xff, "s", ".",
+            "d", (ipaddr >> 8) & 0xff, "s", ".",
+            "d", (ipaddr >> 0) & 0xff, "s", " (");
+        } else if(arp_rval == ArpSocket::kOpARPRequest) {
+          gtty->Printf(
+              "s", "[arp] request received; ",
+              "x", macaddr[0], "s", ":",
+              "x", macaddr[1], "s", ":",
+              "x", macaddr[2], "s", ":",
+              "x", macaddr[3], "s", ":",
+              "x", macaddr[4], "s", ":",
+              "x", macaddr[5], "s", " is ",
+              "d", (ipaddr >> 24) & 0xff, "s", ".",
+              "d", (ipaddr >> 16) & 0xff, "s", ".",
+              "d", (ipaddr >> 8) & 0xff, "s", ".",
+              "d", (ipaddr >> 0) & 0xff, "s", "\n");
+  
+          if(arpsocket.TransmitPacket(ArpSocket::kOpARPReply, ipaddr, macaddr) >= 0) {
+            gtty->Printf("s", "[arp] reply sent\n");
+          } else {
+            gtty->Printf("s", "[arp] failed to sent ARP reply\n");
+          }
+        }
+
+        // handle TCP
         if(!end) {
           int32_t listen_rval = socket.Listen();
 
@@ -204,7 +256,7 @@ extern "C" int main() {
             if(rval >= 0) {
               data[rval-1] = 0;
               gtty->Printf("s", "[server] received ", "d", rval, "s", "[B];\n");
-//              gtty->Printf("s", reinterpret_cast<const char *>(data), "s", "\n");
+              gtty->Printf("s", reinterpret_cast<const char *>(data), "s", "\n");
             } else if (rval == Socket::kResultConnectionClosed) {
               gtty->Printf("s", "[server] connection closed\n");
               end = true;
