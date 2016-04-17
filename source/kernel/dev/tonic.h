@@ -34,15 +34,13 @@
 struct TonicRxDesc {
   uint64_t base_address;  /* address of buffer */
   uint16_t packet_length; /* length */
-  uint32_t reserved0;
-  uint16_t reserved1;
+  uint8_t  reserved[6];
 } __attribute__ ((packed));
 
 struct TonicTxDesc {
   uint64_t base_address;  /* address of buffer */
   uint16_t packet_length; /* length */
-  uint32_t reserved0;
-  uint16_t reserved1;
+  uint8_t  reserved[6];
 } __attribute__ ((packed));
 
 class Tonic : public DevEthernet, Polling {
@@ -85,8 +83,8 @@ private:
   static const uint32_t kRegRdlen  = 0x38;
 
   // packet buffer
-  static const uint32_t kTxdescNumber = 128;
-  static const uint32_t kRxdescNumber = 128;
+  static const uint32_t kTxdescNumber = 8;
+  static const uint32_t kRxdescNumber = 8;
   TonicTxDesc *_tx_desc_buf;
   TonicRxDesc *_rx_desc_buf;
 

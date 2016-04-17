@@ -143,7 +143,7 @@ void Tonic::SetupTx() {
   WriteMmio<uint16_t>(kRegTdt, 0);
   
   // set the size of the desc ring
-  WriteMmio<uint16_t>(kRegTdlen, kTxdescNumber * sizeof(TonicTxDesc));
+  WriteMmio<uint16_t>(kRegTdlen, kTxdescNumber);
 
   // initialize rx desc ring buffer
   for(uint32_t i = 0; i < kTxdescNumber; i++) {
@@ -175,13 +175,15 @@ void Tonic::SetupRx() {
   WriteMmio<uint16_t>(kRegRdt, 0);
 
   // set the size of the desc ring
-  WriteMmio<uint16_t>(kRegRdlen, kRxdescNumber * sizeof(TonicRxDesc));
+  WriteMmio<uint16_t>(kRegRdlen, kRxdescNumber);
 
   // initialize rx desc ring buffer
   for(uint32_t i = 0; i < kRxdescNumber; i++) {
     TonicRxDesc *rxdesc = &_rx_desc_buf[i];
     rxdesc->base_address = k2p(virtmem_ctrl->Alloc(kMaxFrameLength));
     rxdesc->packet_length = 0;
+    gtty->Printf("s", "[tonic] rxdesc[", "d", i, "s", "].base_address = 0x", "x", rxdesc->base_address,
+        "s", "; rxdesc = 0x", "x", v2p(reinterpret_cast<virt_addr>(rxdesc)), "s", "\n");
   }
 }
 
