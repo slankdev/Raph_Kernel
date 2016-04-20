@@ -71,6 +71,7 @@ int time;
 #include <callout.h>
 Callout tt1;
 Callout tt2;
+Callout tt4;
 
 #define FLAG 2
 #if FLAG == 3
@@ -375,6 +376,17 @@ extern "C" int main_of_others() {
         if(!end) tt2.SetHandler(10);
       }, nullptr);
     tt2.SetHandler(10);
+  } else if (apic_ctrl->GetApicId() == 4) {
+    new(&tt4) Callout();
+    tt4.Init([](void*) {
+        if (eth->GetStatus() != bE1000::LinkStatus::Up) {
+          gtty->Printf("s", "[kernel] Link is down; waiting for link is up ...\n");
+          tt4.SetHandler(3000000);
+        } else {
+          gtty->Printf("s", "[kernel] Link is up\n");
+        }
+    }, nullptr);
+    tt4.SetHandler(10);
   }
 
   task_ctrl->Run();
