@@ -198,10 +198,10 @@ extern "C" int main() {
     if(socket.Open() < 0) {
       gtty->Printf("s", "[error] failed to open socket\n");
     }
-    socket.SetIPAddr(inet_atoi(ip1));
-    socket.SetPort(Socket::kPortHTTP);
-    socket.SetListenAddr(inet_atoi(ip2));
+    socket.SetListenAddr(inet_atoi(ip1));
     socket.SetListenPort(Socket::kPortHTTP);
+    socket.SetIPAddr(inet_atoi(ip2));
+    socket.SetPort(0);
 
     static const uint32_t size = Socket::kMSS;
     static uint8_t data[size];
