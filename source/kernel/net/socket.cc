@@ -36,7 +36,7 @@ int32_t NetSocket::Open() {
   if((_device_info = netdev_ctrl->GetDeviceInfo()) == nullptr) {
     return -1;
   } else {
-    _device_info->ptcl_stack->RegisterSocket(this);
+    _device_info->ptcl_stack->RegisterSocket(this, _l3_ptcl);
     return 0;
   }
 }
@@ -45,11 +45,9 @@ int32_t NetSocket::Open() {
  * (TCP/IP) Socket
  */
 
-uint32_t Socket::L2HeaderLength() { return sizeof(EthHeader); }
-uint32_t Socket::L3HeaderLength() { return sizeof(Ipv4Header); }
-uint32_t Socket::L4HeaderLength() { return sizeof(TcpHeader); }
-
-uint16_t Socket::L4Protocol() { return kProtocolTCP; }
+Socket::Socket() {
+  _l3_ptcl = kProtocolIPv4;
+}
 
 int32_t Socket::GetEthAddr(uint32_t ipaddr, uint8_t *macaddr) {
   while(arp_table->Find(ipaddr, macaddr) < 0) {
@@ -63,30 +61,6 @@ int32_t Socket::GetEthAddr(uint32_t ipaddr, uint8_t *macaddr) {
   return 0;
 }
 
-int32_t Socket::L2Tx(uint8_t *buffer, uint8_t *saddr, uint8_t *daddr, uint16_t type) {
-  return EthGenerateHeader(buffer, saddr, daddr, type);
-}
-
-bool Socket::L2Rx(uint8_t *buffer, uint8_t *saddr, uint8_t *daddr, uint16_t type) {
-  return EthFilterPacket(buffer, saddr, daddr, type);
-}
-
-int32_t Socket::L3Tx(uint8_t *buffer, uint32_t length, uint8_t type, uint32_t saddr, uint32_t daddr) {
-  return IpGenerateHeader(buffer, length, type, saddr, daddr);
-}
-
-bool Socket::L3Rx(uint8_t *buffer, uint8_t type, uint32_t saddr, uint32_t daddr) {
-  return IpFilterPacket(buffer, type, saddr, daddr);
-}
-
-int32_t Socket::L4Tx(uint8_t *buffer, uint32_t length, uint32_t saddr, uint32_t daddr, uint16_t sport, uint16_t dport) {
-  return TcpGenerateHeader(buffer, length, saddr, daddr, sport, dport, _type, _seq, _ack);
-}
-
-bool Socket::L4Rx(uint8_t *buffer, uint16_t sport, uint16_t dport) {
-  return TcpFilterPacket(buffer, sport, dport, _type, _seq, _ack);
-}
-
 int32_t Socket::Transmit(const uint8_t *data, uint32_t length, bool is_raw_packet) {
   // alloc buffer
   NetDev::Packet *packet = nullptr;
@@ -98,20 +72,20 @@ int32_t Socket::Transmit(const uint8_t *data, uint32_t length, bool is_raw_packe
     packet->len = length;
     memcpy(packet->buf, data, length);
   } else {
-    packet->len = L2HeaderLength() + L3HeaderLength() + L4HeaderLength() + length;
+    packet->len = sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader) + length;
 
     // packet body
-    uint32_t offset_body = L2HeaderLength() + L3HeaderLength() + L4HeaderLength();
+    uint32_t offset_body = sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader);
     memcpy(packet->buf + offset_body, data, length);
 
     // TCP header
-    uint32_t offset_l4 = L2HeaderLength() + L3HeaderLength();
+    uint32_t offset_l4 = sizeof(EthHeader) + sizeof(Ipv4Header);
     uint32_t saddr = _ipaddr;
-    L4Tx(packet->buf + offset_l4, L4HeaderLength() + length, saddr, _daddr, _sport, _dport);
+    TcpGenerateHeader(packet->buf + offset_l4, sizeof(TcpHeader) + length, saddr, _daddr, _sport, _dport, _type, _seq, _ack);
 
     // IP header
-    uint32_t offset_l3 = L2HeaderLength();
-    L3Tx(packet->buf + offset_l3, L4HeaderLength() + length, L4Protocol(), saddr, _daddr);
+    uint32_t offset_l3 = sizeof(EthHeader);
+    IpGenerateHeader(packet->buf + offset_l3, sizeof(TcpHeader) + length, kProtocolTCP, saddr, _daddr);
 
     // Ethernet header
     uint8_t eth_saddr[6];
@@ -119,19 +93,14 @@ int32_t Socket::Transmit(const uint8_t *data, uint32_t length, bool is_raw_packe
 //    uint8_t eth_daddr[6] = {0x08, 0x00, 0x27, 0xc1, 0x5b, 0x93}; // TODO:
     _device_info->device->GetEthAddr(eth_saddr);
 //    GetEthAddr(_daddr, eth_daddr);
-    L2Tx(packet->buf, eth_saddr, eth_daddr, kProtocolIPv4);
+    EthGenerateHeader(packet->buf, eth_saddr, eth_daddr, kProtocolIPv4);
   }
 
   // transmit
   _device_info->device->TransmitPacket(packet);
   int32_t sent_length = packet->len;
 
-//  for(uint32_t i = 0; i < packet->len; i++) {
-//    gtty->Printf("s", packet->buf[i]<0x10?"0":"", "x", packet->buf[i], "s", i%16==15?"\n":(i%2==1?" ":""));
-//  }
-//  gtty->Printf("s", "\n");
-
-  return (sent_length < 0 || is_raw_packet) ? sent_length : sent_length - (L2HeaderLength() + L3HeaderLength() + L4HeaderLength());
+  return (sent_length < 0 || is_raw_packet) ? sent_length : sent_length - (sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader));
 }
 
 int32_t Socket::TransmitPacket(const uint8_t *packet, uint32_t length) {
@@ -221,15 +190,9 @@ int32_t Socket::Receive(uint8_t *data, uint32_t length, bool is_raw_packet, bool
     return kErrorNoPacketOnWire;
   }
 
-  // filter Ethernet address
-  if(!L2Rx(packet->buf, nullptr, eth_daddr, kProtocolIPv4)) {
-    _device_info->ptcl_stack->FreeRxBuffer(packet);
-    return kErrorInvalidPacketOnWire;
-  }
-
   // filter IP address
-  uint32_t offset_l3 = L2HeaderLength();
-  if(!L3Rx(packet->buf + offset_l3 , L4Protocol(), _daddr, _ipaddr)) {
+  uint32_t offset_l3 = sizeof(EthHeader);
+  if(!IpFilterPacket(packet->buf + offset_l3, kProtocolTCP, _daddr, _ipaddr)) {
     _device_info->ptcl_stack->FreeRxBuffer(packet);
     return kErrorInvalidPacketOnWire;
   }
@@ -240,8 +203,8 @@ int32_t Socket::Receive(uint8_t *data, uint32_t length, bool is_raw_packet, bool
 //  gtty->Printf("s", "\n");
 
   // filter TCP port
-  uint32_t offset_l4 = L2HeaderLength() + L3HeaderLength();
-  if(!L4Rx(packet->buf + offset_l4, _sport, _dport)) {
+  uint32_t offset_l4 = sizeof(EthHeader) + sizeof(Ipv4Header);
+  if(!TcpFilterPacket(packet->buf + offset_l4, _sport, _dport, _type, _seq, _ack)) {
     _device_info->ptcl_stack->FreeRxBuffer(packet);
     return kErrorInvalidPacketOnWire;
   }
@@ -251,7 +214,7 @@ int32_t Socket::Receive(uint8_t *data, uint32_t length, bool is_raw_packet, bool
 
   if(!is_raw_packet) {
     // copy data
-    uint32_t offset = L2HeaderLength() + L3HeaderLength() + L4HeaderLength();
+    uint32_t offset = sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader);
     memcpy(data, packet->buf + offset, length);
   } else {
     memcpy(data, packet->buf, packet->len < length ? packet->len : length);
@@ -264,7 +227,7 @@ int32_t Socket::Receive(uint8_t *data, uint32_t length, bool is_raw_packet, bool
   // finalization
   _device_info->ptcl_stack->FreeRxBuffer(packet);
 
-  return (received_length < 0 || is_raw_packet) ? received_length : received_length - (L2HeaderLength() + L3HeaderLength() + L4HeaderLength());
+  return (received_length < 0 || is_raw_packet) ? received_length : received_length - (sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(TcpHeader));
 }
 
 int32_t Socket::ReceivePacket(uint8_t *data, uint32_t length) {
@@ -590,29 +553,95 @@ int32_t Socket::CloseAck() {
  * UdpSocket
  */
 
-uint32_t UdpSocket::L4HeaderLength() { return sizeof(UDPHeader); }
-
-uint16_t UdpSocket::L4Protocol() { return kProtocolUDP; }
-
-int32_t UdpSocket::L4Tx(uint8_t *buffer, uint32_t length, uint32_t saddr, uint32_t daddr, uint16_t sport, uint16_t dport) {
-  return UdpGenerateHeader(buffer, length, sport, dport);
-}
-
-bool UdpSocket::L4Rx(uint8_t *buffer, uint16_t sport, uint16_t dport) {
-  return UdpFilterPacket(buffer, sport, dport);
-}
-
-int32_t UdpSocket::ReceivePacket(uint8_t *data, uint32_t length) {
-  return Receive(data, length, false, false, 0);
+UdpSocket::UdpSocket() {
+  _l3_ptcl = kProtocolIPv4;
 }
 
 int32_t UdpSocket::TransmitPacket(const uint8_t *data, uint32_t length) {
-  return Transmit(data, length, false);
+  // alloc buffer
+  NetDev::Packet *packet = nullptr;
+  if(!_device_info->device->GetTxPacket(packet)) {
+    return kErrorInsufficientBuffer;
+  }
+
+  packet->len = sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(UdpHeader) + length;
+
+  // packet body
+  uint32_t offset_body = sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(UdpHeader);
+  memcpy(packet->buf + offset_body, data, length);
+
+  // UDP header
+  uint32_t offset_l4 = sizeof(EthHeader) + sizeof(Ipv4Header);
+  uint32_t saddr = _ipaddr;
+  UdpGenerateHeader(packet->buf + offset_l4, sizeof(UdpHeader) + length, _sport, _dport);
+
+  // IP header
+  uint32_t offset_l3 = sizeof(EthHeader);
+  IpGenerateHeader(packet->buf + offset_l3, sizeof(UdpHeader) + length, kProtocolTCP, saddr, _daddr);
+
+  // Ethernet header
+  uint8_t eth_saddr[6];
+  uint8_t eth_daddr[6] = {0x08, 0x00, 0x27, 0xc1, 0x5b, 0x93}; // TODO:
+  _device_info->device->GetEthAddr(eth_saddr);
+//  GetEthAddr(_daddr, eth_daddr);
+  EthGenerateHeader(packet->buf, eth_saddr, eth_daddr, kProtocolIPv4);
+  
+  // transmit
+  _device_info->device->TransmitPacket(packet);
+  int32_t sent_length = packet->len;
+
+  return (sent_length < 0) ? sent_length : sent_length - (sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(UdpHeader));
+}
+
+int32_t UdpSocket::ReceivePacket(uint8_t *data, uint32_t length) {
+  // receiving packet buffer
+  DevEthernet::Packet *packet = nullptr;
+  // my MAC address
+  uint8_t eth_daddr[6];
+  _device_info->device->GetEthAddr(eth_daddr);
+
+  if(!_device_info->ptcl_stack->ReceivePacket(GetProtocolStackId(), packet)) {
+    return kErrorNoPacketOnWire;
+  }
+
+  // filter IP address
+  uint32_t offset_l3 = sizeof(EthHeader);
+  if(!IpFilterPacket(packet->buf + offset_l3, kProtocolUDP, _daddr, _ipaddr)) {
+    _device_info->ptcl_stack->FreeRxBuffer(packet);
+    return kErrorInvalidPacketOnWire;
+  }
+
+  // filter TCP port
+  uint32_t offset_l4 = sizeof(EthHeader) + sizeof(Ipv4Header);
+  if(!UdpFilterPacket(packet->buf + offset_l4, _sport, _dport)) {
+    _device_info->ptcl_stack->FreeRxBuffer(packet);
+    return kErrorInvalidPacketOnWire;
+  }
+
+  // received "RAW" packet length
+  int32_t received_length = packet->len;
+
+  // copy data
+  uint32_t offset = sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(UdpHeader);
+  memcpy(data, packet->buf + offset, length);
+
+  // remember source port
+  // TODO: 適当なので直す(ポートが途中から違ったら？)
+  _dport = GetSourcePort(packet->buf + offset_l4);
+
+  // finalization
+  _device_info->ptcl_stack->FreeRxBuffer(packet);
+
+  return (received_length < 0) ? received_length : received_length - (sizeof(EthHeader) + sizeof(Ipv4Header) + sizeof(UdpHeader));
 }
 
 /*
  * ArpSocket
  */
+
+ArpSocket::ArpSocket() {
+  _l3_ptcl = kProtocolARP;
+}
 
 int32_t ArpSocket::TransmitPacket(uint16_t type, uint32_t tpa, uint8_t *tha) {
   uint32_t ip_daddr = tpa;
@@ -664,12 +693,6 @@ int32_t ArpSocket::ReceivePacket(uint16_t type, uint32_t *spa, uint8_t *sha) {
   // check if there is a new packet on wire (if so, then fetch it)
   if(!_device_info->ptcl_stack->ReceivePacket(GetProtocolStackId(), packet)) {
     return kErrorNoPacketOnWire;
-  }
-
-  // filter Ethernet address
-  if(!EthFilterPacket(packet->buf, nullptr, eth_daddr, kProtocolARP)) {
-    _device_info->ptcl_stack->FreeRxBuffer(packet);
-    return kErrorInvalidPacketOnWire;
   }
 
   // filter IP address

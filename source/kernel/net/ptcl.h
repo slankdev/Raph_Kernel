@@ -44,7 +44,10 @@ public:
   void Setup();
 
   // register new socket
-  bool RegisterSocket(NetSocket *socket);
+  bool RegisterSocket(NetSocket *socket, uint16_t l3_ptcl);
+
+  // remove socket
+  bool RemoveSocket(NetSocket *socket);
 
   // fetch packet (NetSocket uses)
   bool ReceivePacket(uint32_t socket_id, NetDev::Packet *&packet);
@@ -56,9 +59,7 @@ public:
   // pop packet from main queue, then duplicate it into duplicated queue
   void Handle() override;
 
-  // TODO: remove socket
-
-  void SetDevice(NetDev *dev) { _device = dev; }
+  void SetDevice(DevEthernet *dev);
 
 private:
   // packet queue (inserted from network device)
@@ -66,17 +67,26 @@ private:
   typedef RingBuffer <NetDev::Packet*, kQueueDepth> PacketQueue;
   PacketQueue _main_queue;
 
+  struct SocketInfo {
+    PacketQueue dup_queue;
+    bool in_use;
+    uint16_t l3_ptcl;
+  };
+
   // duplicated queue
   static const uint32_t kMaxSocketNumber = 8;
   uint32_t _current_socket_number = 0;
-  PacketQueue _duplicated_queue[kMaxSocketNumber];
+  SocketInfo socket_table[kMaxSocketNumber];
 
   // reference to the network device holding this protocol stack
-  NetDev *_device;
+  DevEthernet *_device;
+  uint8_t _eth_addr[6];
 
   SpinLock _lock;
 
   void InitPacketQueue();
+
+  bool FilterPacket(NetDev::Packet *packet);
 };
 
 #endif // __RAPH_KERNEL_NET_PTCL_H__
