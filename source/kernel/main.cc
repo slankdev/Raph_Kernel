@@ -71,6 +71,8 @@ bE1000 *eth;
 uint64_t cnt;
 int time;
 
+DevEthernet *netdev;
+
 #include <callout.h>
 Callout tt1;
 Callout tt2;
@@ -176,13 +178,20 @@ extern "C" int main() {
 
   gtty->Init();
 
+  if(tonic != nullptr) {
+    netdev = tonic;
+  } else if(eth != nullptr) {
+    netdev = eth;
+  } else {
+    kassert(false);
+  }
+
   static ArpSocket socket;
   if(socket.Open() < 0) {
     gtty->Printf("s", "[error] failed to open socket\n");
   }
   socket.SetIPAddr(inet_atoi(ip1));
 
-  kassert(tonic != nullptr);
   Function func;
   func.Init([](void *){
       uint32_t ipaddr;
@@ -220,14 +229,15 @@ extern "C" int main() {
             "d", (ipaddr >> 8) & 0xff, "s", ".",
             "d", (ipaddr >> 0) & 0xff, "s", "\n");
 
-        if(socket.TransmitPacket(ArpSocket::kOpARPReply, ipaddr, macaddr) >= 0) {
+        int32_t arp_rval = socket.TransmitPacket(ArpSocket::kOpARPReply, ipaddr, macaddr);
+        if(arp_rval >= 0) {
           gtty->Printf("s", "[arp] reply sent\n");
         } else {
           gtty->Printf("s", "[arp] failed to sent ARP reply\n");
         }
       }
     }, nullptr);
-  tonic->SetReceiveCallback(2, func);
+  netdev->SetReceiveCallback(0, func);
 
   extern int kKernelEndAddr;
   // stackは16K
@@ -275,45 +285,22 @@ extern "C" int main_of_others() {
 
   gtty->Printf("s", "[cpu] info: #", "d", apic_ctrl->GetApicId(), "s", " started.\n");
 
-  // ループ性能測定用
-  // if (apic_ctrl->GetApicId() == 4) {
-  //   PollingFunc p;
-  //   static int hoge = 0;
-  //   p.Init([](void *){
-  //       int hoge2 = timer->GetUsecFromCnt(timer->ReadMainCnt()) - hoge;
-  //       gtty->Printf("d",hoge2,"s"," ");
-  //       hoge = timer->GetUsecFromCnt(timer->ReadMainCnt());
-  //     }, nullptr);
-  //   p.Register();
-  // }
-
-  // ワンショット性能測定用
-  if (apic_ctrl->GetApicId() == 5) {
-    new(&tt1) Callout;
-    tt1.Init([](void *){
-        if (!apic_ctrl->IsBootupAll()) {
-          tt1.SetHandler(1000);
-          return;
-        }
-      }, nullptr);
-    tt1.SetHandler(10);
-  }
-
-  if (apic_ctrl->GetApicId() == 3) {
+  if (apic_ctrl->GetApicId() == 1) {
     cnt = 0;
     new(&tt2) Callout;
-    time = 10;
+    time = 1000;
     tt2.Init([](void *){
         if (!apic_ctrl->IsBootupAll()) {
           tt2.SetHandler(1000);
           return;
         }
-        kassert(tonic != nullptr);
-        tonic->UpdateLinkStatus();
-        if (tonic->GetStatus() != Tonic::LinkStatus::Up) {
+        /*
+        netdev->UpdateLinkStatus();
+        if (netdev->GetStatus() != DevEthernet::LinkStatus::Up) {
           tt2.SetHandler(1000);
           return;
         }
+        */
         if (cnt != 0) {
           tt2.SetHandler(10);
           return;
@@ -334,10 +321,10 @@ extern "C" int main_of_others() {
 
         time--;
         if (time != 0) {
-          tt2.SetHandler(3000);
+          tt2.SetHandler(1000000);
         }
       }, nullptr);
-    tt2.SetHandler(10);
+    tt2.SetHandler(10000000);
   }
   task_ctrl->Run();
   return 0;
