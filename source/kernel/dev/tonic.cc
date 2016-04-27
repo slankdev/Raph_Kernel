@@ -109,7 +109,7 @@ void Tonic::Setup() {
 
   // N.B. IP address write address
   uint8_t ipaddr[4] = {192, 168, 100, 165};
-  WriteMmio<uint32_t>(kRegPadr0, ipaddr[0] | (ipaddr[1] << 8) | (ipaddr[2] << 16) | (ipaddr[3] << 24));
+  WriteMmio<uint32_t>(kRegPadr0, (ipaddr[0] << 24) | (ipaddr[1] << 16) | (ipaddr[2] << 8) | ipaddr[3]);
   gtty->Printf("s", "[tonic] IP address is ",
       "d", ipaddr[0], "s", ".",
       "d", ipaddr[1], "s", ".",
