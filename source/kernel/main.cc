@@ -200,7 +200,7 @@ extern "C" int main() {
     if(arpsocket.Open() < 0) {
       gtty->Printf("s", "[error] failed to open socket\n");
     }
-    arpsocket.SetIPAddr(inet_atoi(ip1));
+    arpsocket.SetIpAddr(inet_atoi(ip1));
   
     // for ARP
     static uint32_t ipaddr;
@@ -211,11 +211,11 @@ extern "C" int main() {
       gtty->Printf("s", "[error] failed to open socket\n");
     }
     socket.SetListenAddr(inet_atoi(ip1));
-    socket.SetListenPort(Socket::kPortHTTP);
-    socket.SetIPAddr(inet_atoi(ip2));
+    socket.SetListenPort(Socket::kPortHttp);
+    socket.SetIpAddr(inet_atoi(ip2));
     socket.SetPort(0);
 
-    static const uint32_t size = Socket::kMSS;
+    static const uint32_t size = Socket::kMss;
     static uint8_t data[size];
     static bool end = false;
 
@@ -224,7 +224,7 @@ extern "C" int main() {
         // handle ARP
         int32_t arp_rval = arpsocket.ReceivePacket(0, &ipaddr, macaddr);
   
-        if(arp_rval == ArpSocket::kOpARPReply) {
+        if(arp_rval == ArpSocket::kOpArpReply) {
           gtty->Printf(
             "s", "[arp] reply received; ",
             "x", macaddr[0], "s", ":",
@@ -237,7 +237,7 @@ extern "C" int main() {
             "d", (ipaddr >> 16) & 0xff, "s", ".",
             "d", (ipaddr >> 8) & 0xff, "s", ".",
             "d", (ipaddr >> 0) & 0xff, "s", " (");
-        } else if(arp_rval == ArpSocket::kOpARPRequest) {
+        } else if(arp_rval == ArpSocket::kOpArpRequest) {
           gtty->Printf(
               "s", "[arp] request received; ",
               "x", macaddr[0], "s", ":",
@@ -251,7 +251,7 @@ extern "C" int main() {
               "d", (ipaddr >> 8) & 0xff, "s", ".",
               "d", (ipaddr >> 0) & 0xff, "s", "\n");
   
-          if(arpsocket.TransmitPacket(ArpSocket::kOpARPReply, ipaddr, macaddr) >= 0) {
+          if(arpsocket.TransmitPacket(ArpSocket::kOpArpReply, ipaddr, macaddr) >= 0) {
             gtty->Printf("s", "[arp] reply sent\n");
           } else {
             gtty->Printf("s", "[arp] failed to sent ARP reply\n");
@@ -336,10 +336,10 @@ extern "C" int main_of_others() {
     if(socket.Open() < 0) {
       gtty->Printf("s", "[error] failed to open socket\n");
     }
-    socket.SetIPAddr(inet_atoi(ip1));
-    socket.SetPort(Socket::kPortHTTP);
+    socket.SetIpAddr(inet_atoi(ip1));
+    socket.SetPort(Socket::kPortHttp);
     socket.SetListenAddr(inet_atoi(ip2));
-    socket.SetListenPort(Socket::kPortHTTP);
+    socket.SetListenPort(Socket::kPortHttp);
   
     static bool end = false;
     static const uint32_t size = 8000;
