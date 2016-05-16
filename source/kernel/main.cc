@@ -22,7 +22,7 @@
 
 #include <global.h>
 #include <spinlock.h>
-#include <acpi.h>
+#include <raph_acpi.h>
 #include <apic.h>
 #include <multiboot.h>
 #include <task.h>
@@ -61,31 +61,40 @@ Tty *gtty;
 Keyboard *keyboard;
 Shell *shell;
 
-PCICtrl *pci_ctrl;
+PciCtrl *pci_ctrl;
 
 static uint32_t rnd_next = 1;
 
-#include <dev/nic/intel/em/bem.h>
-bE1000 *eth;
+#include <freebsd/sys/types.h>
+BsdDevEthernet *eth;
 uint64_t cnt;
-int time;
+int64_t sum;
+static const int stime = 10000;
+int time, rtime;
 
 #include <callout.h>
 Callout tt1;
 Callout tt2;
-Callout tt4;
+Callout tt3;
 
-#define FLAG 2
-#if FLAG == 3
+#define QEMU 0
+#define SND  1
+#define RCV  2
+#define TEST 3
+
+#define FLAG QEMU 
+#if FLAG == TEST
 #define IP1 192, 168, 100, 117
 #define IP2 192, 168, 100, 254
-#elif FLAG == 2
+#elif FLAG == SND
 #define IP1 192, 168, 100, 117
 #define IP2 192, 168, 100, 104
-#elif FLAG == 1
+// #define IP1 0x00, 0x11, 0x22, 0x34
+// #define IP2 0x00, 0x11, 0x22, 0x33
+#elif FLAG == RCV
 #define IP1 192, 168, 100, 104
 #define IP2 192, 168, 100, 117
-#elif FLAG == 0
+#elif FLAG == QEMU
 #define IP1 10, 0, 2, 5
 #define IP2 10, 0, 2, 15
 #endif
@@ -183,50 +192,58 @@ extern "C" int main() {
 
   InitNetCtrl();
 
-  InitDevices<PCICtrl, Device>();
+  InitDevices<PciCtrl, Device>();
 
   gtty->Init();
 
-  if (FLAG == 1) {
-    gtty->Printf("s", "[kernel] launch TCP client (IP address : ",
-        "d", ip1[0], "s", ".", "d", ip1[1], "s", ".",
-        "d", ip1[2], "s", ".", "d", ip1[3], "s", ")\n");
-  } else if (FLAG == 2) {
-    gtty->Printf("s", "[kernel] launch TCP server (IP address : ",
-        "d", ip1[0], "s", ".", "d", ip1[1], "s", ".",
-        "d", ip1[2], "s", ".", "d", ip1[3], "s", ")\n");
+  gtty->Printf("s", "[kernel] open socket (IP address : ",
+      "d", ip1[0], "s", ".", "d", ip1[1], "s", ".",
+      "d", ip1[2], "s", ".", "d", ip1[3], "s", ")\n");
 
-    static ArpSocket arpsocket;
-    if(arpsocket.Open() < 0) {
-      gtty->Printf("s", "[error] failed to open socket\n");
-    }
-    arpsocket.SetIpAddr(inet_atoi(ip1));
+  static ArpSocket arp_socket;
+  if(arp_socket.Open() < 0) {
+    gtty->Printf("s", "[error] failed to open socket\n");
+  }
+  arp_socket.SetIpAddr(inet_atoi(ip1));
   
-    // for ARP
-    static uint32_t ipaddr;
-    static uint8_t macaddr[6];
+  // for ARP
+  static uint32_t ipaddr;
+  static uint8_t macaddr[6];
 
-    static Socket socket;
-    if(socket.Open() < 0) {
-      gtty->Printf("s", "[error] failed to open socket\n");
-    }
-    socket.SetListenAddr(inet_atoi(ip1));
-    socket.SetListenPort(Socket::kPortHttp);
-    socket.SetIpAddr(inet_atoi(ip2));
-    socket.SetPort(0);
+  static Socket socket;
+  if(socket.Open() < 0) {
+    gtty->Printf("s", "[error] failed to open socket\n");
+  }
+  socket.SetListenAddr(inet_atoi(ip1));
+  socket.SetListenPort(Socket::kPortHttp);
+  socket.SetIpAddr(inet_atoi(ip2));
+  socket.SetPort(0);
 
-    static const uint32_t size = Socket::kMss;
-    static uint8_t data[size];
-    static bool end = false;
+  static const uint32_t size = Socket::kMss;
+  static uint8_t data[size];
+  static bool end = false;
 
-    Function func;
-    func.Init([](void *){
-        // handle ARP
-        int32_t arp_rval = arpsocket.ReceivePacket(0, &ipaddr, macaddr);
+  Function arp_callback;
+  arp_callback.Init([](void *){
+      // handle ARP
+      int32_t arp_rval = arp_socket.ReceivePacket(0, &ipaddr, macaddr);
   
-        if(arp_rval == ArpSocket::kOpArpReply) {
-          gtty->Printf(
-            "s", "[arp] reply received; ",
+      if(arp_rval == ArpSocket::kOpArpReply) {
+        gtty->Printf(
+          "s", "[arp] reply received; ",
+          "x", macaddr[0], "s", ":",
+          "x", macaddr[1], "s", ":",
+          "x", macaddr[2], "s", ":",
+          "x", macaddr[3], "s", ":",
+          "x", macaddr[4], "s", ":",
+          "x", macaddr[5], "s", " is ",
+          "d", (ipaddr >> 24) & 0xff, "s", ".",
+          "d", (ipaddr >> 16) & 0xff, "s", ".",
+          "d", (ipaddr >> 8) & 0xff, "s", ".",
+          "d", (ipaddr >> 0) & 0xff, "s", " (");
+      } else if(arp_rval == ArpSocket::kOpArpRequest) {
+        gtty->Printf(
+            "s", "[arp] request received; ",
             "x", macaddr[0], "s", ":",
             "x", macaddr[1], "s", ":",
             "x", macaddr[2], "s", ":",
@@ -236,49 +253,38 @@ extern "C" int main() {
             "d", (ipaddr >> 24) & 0xff, "s", ".",
             "d", (ipaddr >> 16) & 0xff, "s", ".",
             "d", (ipaddr >> 8) & 0xff, "s", ".",
-            "d", (ipaddr >> 0) & 0xff, "s", " (");
-        } else if(arp_rval == ArpSocket::kOpArpRequest) {
-          gtty->Printf(
-              "s", "[arp] request received; ",
-              "x", macaddr[0], "s", ":",
-              "x", macaddr[1], "s", ":",
-              "x", macaddr[2], "s", ":",
-              "x", macaddr[3], "s", ":",
-              "x", macaddr[4], "s", ":",
-              "x", macaddr[5], "s", " is ",
-              "d", (ipaddr >> 24) & 0xff, "s", ".",
-              "d", (ipaddr >> 16) & 0xff, "s", ".",
-              "d", (ipaddr >> 8) & 0xff, "s", ".",
-              "d", (ipaddr >> 0) & 0xff, "s", "\n");
+            "d", (ipaddr >> 0) & 0xff, "s", "\n");
   
-          if(arpsocket.TransmitPacket(ArpSocket::kOpArpReply, ipaddr, macaddr) >= 0) {
-            gtty->Printf("s", "[arp] reply sent\n");
-          } else {
-            gtty->Printf("s", "[arp] failed to sent ARP reply\n");
+        if(arp_socket.TransmitPacket(ArpSocket::kOpArpReply, ipaddr, macaddr) >= 0) {
+          gtty->Printf("s", "[arp] reply sent\n");
+        } else {
+          gtty->Printf("s", "[arp] failed to sent ARP reply\n");
+        }
+      }
+  }, nullptr);
+  arp_socket.SetReceiveCallback(2, arp_callback);
+
+  Function tcp_callback;
+  tcp_callback.Init([](void *){
+      if(!end) {
+        int32_t listen_rval = socket.Listen();
+
+        if (listen_rval >= 0) {
+          gtty->Printf("s", "[server] connection established\n");
+        } else if (listen_rval == Socket::kResultAlreadyEstablished) {
+          int32_t rval = socket.ReceivePacket(data, size);
+          if(rval >= 0) {
+            data[rval-1] = 0;
+            gtty->Printf("s", "[server] received ", "d", rval, "s", "[B];\n");
+            gtty->Printf("s", reinterpret_cast<const char *>(data), "s", "\n");
+          } else if (rval == Socket::kResultConnectionClosed) {
+            gtty->Printf("s", "[server] connection closed\n");
+            end = true;
           }
         }
-
-        // handle TCP
-        if(!end) {
-          int32_t listen_rval = socket.Listen();
-
-          if (listen_rval >= 0) {
-            gtty->Printf("s", "[server] connection established\n");
-          } else if (listen_rval == Socket::kResultAlreadyEstablished) {
-            int32_t rval = socket.ReceivePacket(data, size);
-            if(rval >= 0) {
-              data[rval-1] = 0;
-              gtty->Printf("s", "[server] received ", "d", rval, "s", "[B];\n");
-              gtty->Printf("s", reinterpret_cast<const char *>(data), "s", "\n");
-            } else if (rval == Socket::kResultConnectionClosed) {
-              gtty->Printf("s", "[server] connection closed\n");
-              end = true;
-            }
-          }
-        }
-      }, nullptr);
-    eth->SetReceiveCallback(2, func);
-  }
+      }
+    }, nullptr);
+  socket.SetReceiveCallback(2, tcp_callback);
 
   extern int kKernelEndAddr;
   // stackは16K
@@ -290,30 +296,32 @@ extern "C" int main() {
   kassert(paging_ctrl->IsVirtAddrMapped(reinterpret_cast<virt_addr>(&kKernelEndAddr) - (4096 * 5) + 1));
   kassert(!paging_ctrl->IsVirtAddrMapped(reinterpret_cast<virt_addr>(&kKernelEndAddr) - 4096 * 6));
 
-  cnt = 0;
-
-  gtty->Printf("s", "[cpu] info: #", "d", apic_ctrl->GetApicId(), "s", " started.\n");
-
+  gtty->Printf("s", "[cpu] info: #", "d", apic_ctrl->GetCpuId(), "s", "(apic id:", "d", apic_ctrl->GetApicIdFromCpuId(apic_ctrl->GetCpuId()), "s", ") started.\n");
+  
   apic_ctrl->StartAPs();
 
   gtty->Printf("s", "\n\n[kernel] info: initialization completed\n");
 
-  // print keyboard_input
-  PollingFunc _keyboard_polling;
-  keyboard->Setup(0); //should we define kDefaultLapicid = 0 ?
-
   shell->Setup();
   shell->Register("test", shell_test);
-
-  _keyboard_polling.Init([](void *) {
-    while(keyboard->Count() > 0) {
-      char ch[2] = {'\0','\0'};
-      ch[0] = keyboard->GetCh();
-      gtty->Printf("s", ch);
-      shell->ReadCh(ch[0]);
-    }
-  }, nullptr);
-  _keyboard_polling.Register();
+  
+  do {
+    // print keyboard_input
+    // TODO: Functional FIFOにすべき
+    PollingFunc _keyboard_polling;
+    Function func;
+    func.Init([](void *) {
+        // print keyboard_input
+        while(keyboard->Count() > 0) {
+          char ch[2] = {'\0','\0'};
+          ch[0] = keyboard->GetCh();
+          gtty->Printf("s", ch);
+          shell->ReadCh(ch[0]);
+        }
+      }, nullptr);
+    _keyboard_polling.Init(func);
+    // _keyboard_polling.Register(1);
+  } while(0);
   
   task_ctrl->Run();
 
@@ -329,82 +337,7 @@ extern "C" int main_of_others() {
   gdt->SetupProc();
   idt->SetupProc();
 
-  gtty->Printf("s", "[cpu] info: #", "d", apic_ctrl->GetApicId(), "s", " started.\n");
-
-  if (apic_ctrl->GetApicId() == 3 && FLAG == 1) {
-    static Socket socket;
-    if(socket.Open() < 0) {
-      gtty->Printf("s", "[error] failed to open socket\n");
-    }
-    socket.SetIpAddr(inet_atoi(ip1));
-    socket.SetPort(Socket::kPortHttp);
-    socket.SetListenAddr(inet_atoi(ip2));
-    socket.SetListenPort(Socket::kPortHttp);
-  
-    static bool end = false;
-    static const uint32_t size = 8000;
-    static uint8_t data[size];
-    static uint32_t sent_length = 0;
-    static uint32_t remain_length = size;
-    static uint8_t *ptr_data = data;
-    memset(data, 0x41, size-1);
-    data[size-1] = 0;
-  
-    new(&tt2) Callout;
-    tt2.Init([](void *){
-        if (!apic_ctrl->IsBootupAll()) {
-          tt2.SetHandler(1000);
-          return;
-        }
-        apic_ctrl->SendIpi(3);
-        kassert(eth != nullptr);
-        eth->UpdateLinkStatus();
-        if (eth->GetStatus() != bE1000::LinkStatus::Up) {
-          tt2.SetHandler(1000);
-          return;
-        }
-        if (cnt != 0) {
-          tt2.SetHandler(10);
-          return;
-        }
-
-        int32_t connect_rval = socket.Connect();
-
-        if (connect_rval >= 0) {
-          gtty->Printf("s", "[client] connection established\n");
-        } else if (connect_rval == Socket::kResultAlreadyEstablished) {
-          if (sent_length < size) {
-            int32_t rval = socket.TransmitPacket(ptr_data, remain_length);
-
-            if (rval >= 0) {
-              ptr_data += rval;
-              remain_length -= rval;
-              sent_length += rval;
-              gtty->Printf("s", "[client] sent ", "d", rval, "s", "[B]\n");
-            }
-          } else {
-            gtty->Printf("s", "[client] transmission complete\n");
-            socket.Close();
-            gtty->Printf("s", "[client] connection closed\n");
-            end = true;
-          }
-        }
-
-        if(!end) tt2.SetHandler(10);
-      }, nullptr);
-    tt2.SetHandler(10);
-  } else if (apic_ctrl->GetApicId() == 4) {
-    new(&tt4) Callout();
-    tt4.Init([](void*) {
-        if (eth->GetStatus() != bE1000::LinkStatus::Up) {
-          gtty->Printf("s", "[kernel] Link is down; waiting for link is up ...\n");
-          tt4.SetHandler(3000000);
-        } else {
-          gtty->Printf("s", "[kernel] Link is up\n");
-        }
-    }, nullptr);
-    tt4.SetHandler(10);
-  }
+  gtty->Printf("s", "[cpu] info: #", "d", apic_ctrl->GetCpuId(), "s", "(apic id:", "d", apic_ctrl->GetApicIdFromCpuId(apic_ctrl->GetCpuId()), "s", ") started.\n");
 
   task_ctrl->Run();
   return 0;
@@ -413,7 +346,22 @@ extern "C" int main_of_others() {
 void kernel_panic(const char *class_name, const char *err_str) {
   gtty->PrintfRaw("s", "\n[","s",class_name,"s","] error: ","s",err_str);
   while(true) {
-    asm volatile("hlt;");
+    asm volatile("cli;hlt;");
+  }
+}
+
+void checkpoint(int id, const char *str) {
+  if (id < 0 || apic_ctrl->GetCpuId() == id) {
+    gtty->Printf("s",str);
+  }
+}
+
+void _kassert(const char *file, int line, const char *func) {
+  if (gtty != nullptr) {
+    gtty->PrintfRaw("s", "assertion failed at ", "s", file, "s", " l.", "d", line, "s", " (", "s", func, "s", ") Kernel stopped!");
+  }
+  while(true){
+    asm volatile("cli;hlt");
   }
 }
 

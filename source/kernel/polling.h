@@ -34,56 +34,59 @@ class Polling {
     kPolling,
     kStopped,
   };
-  void RegisterPolling() {
+  Polling() {
+    ClassFunction<Polling> func;
+    func.Init(this, &Polling::HandleSub, nullptr);
+    _task.SetFunc(func);
+  }
+  void RegisterPolling(int cpuid) {
     if (_state == PollingState::kPolling) {
       return;
     }
-    Function func;
-    func.Init(HandleSub, reinterpret_cast<void *>(this));
+    _cpuid = cpuid;
     _state = PollingState::kPolling;
-    task_ctrl->RegisterPolling(_apicid, func);
+    task_ctrl->Register(_cpuid, &_task);
   }
-  // pollingを登録したprocessorで実行する事
   void RemovePolling() {
     if (_state == PollingState::kStopped) {
       return;
     }
-    Function func;
-    func.Init(HandleSub, reinterpret_cast<void *>(this));
     _state = PollingState::kStopped;
-    task_ctrl->Remove(_apicid, func);
+    task_ctrl->Remove(_cpuid, &_task);
   }
   virtual void Handle() = 0;
-  int _apicid = 0;
  private:
-  static void HandleSub(void *p) {
-    Polling *that = reinterpret_cast<Polling *>(p);
-    if (that->_state == PollingState::kPolling) {
-      that->Handle();
+  void HandleSub(void *arg) {
+    if (_state == PollingState::kPolling) {
+      Handle();
     } else {
-      that->RemovePolling();
+      RemovePolling();
     }
   }
   PollingState _state = PollingState::kStopped;
+  int _cpuid = -1;
+  Task _task;
 };
 
 class PollingFunc : public Polling {
  public:
   void Register() {
-    this->RegisterPolling();
+    Register(apic_ctrl->GetCpuId());
+  }
+  void Register(int cpuid) {
+    this->RegisterPolling(cpuid);
   }
   void Remove() {
     this->RemovePolling();
   }
-  void Init(void (*func)(void *), void *arg) {
-    _apicid = apic_ctrl->GetApicId();
-    _func.Init(func, arg);
+  void Init(const GenericFunction &func) {
+    _func.Copy(func);
   }
  private:
   virtual void Handle() override {
     _func.Execute();
   }
-  Function _func;
+  FunctionBase _func;
 };
 
 #endif /* __RAPH_KERNEL_DEV_POLLING_H__ */

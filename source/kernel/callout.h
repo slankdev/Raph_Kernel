@@ -44,14 +44,17 @@ class Callout : public Polling {
   }
   virtual ~Callout() {
   }
-  void Init(void (*func)(void *), void *arg) {
-    _func.Init(func, arg);
+  void Init(const GenericFunction &func) {
+    _func.Copy(func);
   }
   void SetHandler(uint32_t us) {
+    SetHandler(apic_ctrl->GetCpuId(), us);
+  }
+  void SetHandler(int cpuid, uint32_t us) {
     if (_state == CalloutState::kNull) {
       _state = CalloutState::kWaiting;
       _cnt = timer->GetCntAfterPeriod(timer->ReadMainCnt(), us);
-      this->RegisterPolling();
+      this->RegisterPolling(cpuid);
     }
   }
   volatile bool IsHandling() {
@@ -81,14 +84,14 @@ class Callout : public Polling {
  private:
   volatile int _status = 0;
   uint64_t _cnt;
-  Function _func;
+  FunctionBase _func;
   CalloutState _state = CalloutState::kNull;
   CalloutHandleState _hstate = CalloutHandleState::kStopped;
 };
 
 #include "spinlock.h"
 
-class LckCallout : public Callout {
+class LckCallout final : public Callout {
  public:
   void SetLock(SpinLock *lock) {
     _lock = lock;

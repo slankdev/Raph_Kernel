@@ -20,14 +20,17 @@
  * 
  */
 
-#ifndef __RAPH_KERNEL_DEV_PCI_H__
-#define __RAPH_KERNEL_DEV_PCI_H__
+#ifndef __RAPH_KERNEL_DEV_Pci_H__
+#define __RAPH_KERNEL_DEV_Pci_H__
 
 #include <stdint.h>
-#include "../acpi.h"
-#include "../global.h"
-#include "device.h"
-#include "../mem/virtmem.h"
+#include <raph_acpi.h>
+#include <global.h>
+#include <spinlock.h>
+#include <mem/virtmem.h>
+#include <idt.h>
+#include <apic.h>
+#include <dev/device.h>
 
 struct MCFGSt {
   uint8_t reserved1[8];
@@ -43,17 +46,18 @@ struct MCFG {
   MCFGSt list[0];
 } __attribute__ ((packed));
 
-class DevPCI;
+class DevPci;
 
-class PCICtrl : public Device {
+class PciCtrl : public Device {
  public:
   enum class CapabilityId : uint8_t {
+   kMsi = 0x05,
    kPcie = 0x10,
   };
 
   static void Init() {
-    PCICtrl *addr = reinterpret_cast<PCICtrl *>(virtmem_ctrl->Alloc(sizeof(PCICtrl)));
-    pci_ctrl = new(addr) PCICtrl; 
+    PciCtrl *addr = reinterpret_cast<PciCtrl *>(virtmem_ctrl->Alloc(sizeof(PciCtrl)));
+    pci_ctrl = new(addr) PciCtrl;
     pci_ctrl->_Init();
   }
   virt_addr GetVaddr(uint8_t bus, uint8_t device, uint8_t func, uint16_t reg) {
@@ -70,6 +74,8 @@ class PCICtrl : public Device {
   // Capabilityへのオフセットを返す
   // 見つからなかった時は0
   uint16_t FindCapability(uint8_t bus, uint8_t device, uint8_t func, CapabilityId id);
+  // エラーの場合flaseが返る
+  bool SetMsi(uint8_t bus, uint8_t device, uint8_t func, uint64_t addr, uint16_t data);
   static const uint16_t kDevIdentifyReg = 0x2;
   static const uint16_t kVendorIDReg = 0x00;
   static const uint16_t kDeviceIDReg = 0x02;
@@ -86,6 +92,21 @@ class PCICtrl : public Device {
   // Capability Registers
   static const uint16_t kCapRegId = 0x0;
   static const uint16_t kCapRegNext = 0x1;
+
+  // MSI Capability Registers
+  // see PCI Local Bus Specification Figure 6-9
+  static const uint16_t kMsiCapRegControl = 0x2;
+  static const uint16_t kMsiCapRegMsgAddr = 0x4;
+  // 32bit
+  static const uint16_t kMsiCapReg32MsgData = 0x8;
+  // 64bit
+  static const uint16_t kMsiCapReg64MsgUpperAddr = 0x8;
+  static const uint16_t kMsiCapReg64MsgData = 0xC;
+
+  // Message Control for MSI
+  // see PCI Local Bus Specification 6.8.1.3
+  static const uint16_t kMsiCapRegControlMsiEnableFlag = 1 << 0;
+  static const uint16_t kMsiCapRegControlAddr64Flag = 1 << 7;
 
   static const uint16_t kCommandRegBusMasterEnableFlag = 1 << 2;
   static const uint16_t kCommandRegMemWriteInvalidateFlag = 1 << 4;
@@ -112,11 +133,14 @@ class PCICtrl : public Device {
 };
 
 // !!! important !!!
-// 派生クラスはstatic void InitPCI(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, bool mf); を作成する事
-class DevPCI : public Device {
+// 派生クラスはstatic void InitPci(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, bool mf); を作成する事
+class DevPci : public Device {
  public:
- DevPCI(uint8_t bus, uint8_t device, bool mf) : _bus(bus), _device(device), _mf(mf) {}
-  static bool InitPCI(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, bool mf) {
+ DevPci(uint8_t bus, uint8_t device, bool mf) : _bus(bus), _device(device), _mf(mf) {
+  }
+  virtual ~DevPci() {
+  }
+  static bool InitPci(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, bool mf) {
     return false;
   } // dummy
   template<class T> T ReadReg(uint16_t reg) {
@@ -127,27 +151,38 @@ class DevPCI : public Device {
     kassert(pci_ctrl != nullptr);
     pci_ctrl->WriteReg<T>(_bus, _device, 0, reg, value);
   }
-  uint16_t FindCapability(PCICtrl::CapabilityId id) {
+  uint16_t FindCapability(PciCtrl::CapabilityId id) {
     kassert(pci_ctrl != nullptr);
     return pci_ctrl->FindCapability(_bus, _device, 0, id);
+  } 
+  // 返り値は割り当てられたvector または-1(error)
+  int SetMsi(int cpuid, int_callback handler, void *arg) {
+    kassert(pci_ctrl != nullptr);
+    kassert(idt != nullptr);
+    int vector = idt->SetIntCallback(cpuid, handler, arg);
+    if(pci_ctrl->SetMsi(_bus, _device, 0, ApicCtrl::Lapic::GetMsiAddr(apic_ctrl->GetApicIdFromCpuId(cpuid)), ApicCtrl::Lapic::GetMsiData(vector))) {
+      return vector;
+    }
+    return -1;
   }
  private:
+  DevPci();
   const uint8_t _bus;
   const uint8_t _device;
   const bool _mf;
 };
 
 template<class T>
-static inline void InitPCIDevices(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, bool mf) {
-  T::InitPCI(vid, did, bus, device, mf);
+static inline void InitPciDevices(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, bool mf) {
+  T::InitPci(vid, did, bus, device, mf);
 }
 
 template<class T1, class T2, class... Rest>
-static inline void InitPCIDevices(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, bool mf) {
-  if (!T1::InitPCI(vid, did, bus, device, mf)) {
-    InitPCIDevices<T2, Rest...>(vid, did, bus, device, mf);
+static inline void InitPciDevices(uint16_t vid, uint16_t did, uint8_t bus, uint8_t device, bool mf) {
+  if (!T1::InitPci(vid, did, bus, device, mf)) {
+    InitPciDevices<T2, Rest...>(vid, did, bus, device, mf);
   }
 }
 
 
-#endif /* __RAPH_KERNEL_DEV_PCI_H__ */
+#endif /* __RAPH_KERNEL_DEV_Pci_H__ */

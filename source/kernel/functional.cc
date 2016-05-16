@@ -22,16 +22,19 @@
 
 #include <functional.h>
 #include <task.h>
+#include <raph.h>
 
 void Functional::WakeupFunction() {
   // TODO : CPUを叩きおこす
-  Locker locker(_lock);
-  if (_state == FunctionState::kNotFunctioning && _func.CanExecute()) {
-    _state = FunctionState::kFunctioning;
-    Function func;
-    func.Init(Handle, reinterpret_cast<void *>(this));
-    task_ctrl->Register(_apicid, func);
+  if (!_func.CanExecute()) {
+    return;
   }
+  Locker locker(_lock);
+  if (_state == FunctionState::kFunctioning) {
+    return;
+  }
+  _state = FunctionState::kFunctioning;
+  task_ctrl->Register(_cpuid, &_task);
 }
 
 void Functional::Handle(void *p) {
@@ -44,14 +47,15 @@ void Functional::Handle(void *p) {
       Locker locker(that->_lock);
       if (!that->ShouldFunc()) {
         that->_state = FunctionState::kNotFunctioning;
+        task_ctrl->Remove(that->_cpuid, &that->_task);
         break;
       }
     }
   }
 }
 
-void Functional::SetFunction(int apicid, const Function &func) {
+void Functional::SetFunction(int cpuid, const GenericFunction &func) {
   kassert(!_func.CanExecute());
-  _apicid = apicid;
-  _func = func;
+  _cpuid = cpuid;
+  _func.Copy(func);
 }

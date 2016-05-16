@@ -27,6 +27,7 @@
 #include <string.h>
 #include <buf.h>
 #include <spinlock.h>
+#include <polling.h>
 #include <freebsd/sys/param.h>
 
 class ProtocolStack;
@@ -39,8 +40,12 @@ public:
     uint8_t buf[MCLBYTES];
   };
   enum class LinkStatus {
-    Up,
-    Down
+    kUp,
+    kDown,
+  };
+  enum class HandleMethod {
+    kInt,
+    kPolling,
   };
 
   typedef RingBuffer<Packet *, 300> NetDevRingBuffer;
@@ -60,6 +65,7 @@ public:
   // そのうちrx_reservedが枯渇して、一切のパケットの受信ができなくなるるよ♪
   NetDevRingBuffer _rx_reserved;
   NetDevFunctionalRingBuffer _rx_buffered;
+  NetDevFunctionalRingBuffer _rx_filtered;
 
   // txパケットの処理の流れ
   // 0. tx_reservedを初期化、バッファを満タンにしておく
@@ -74,7 +80,7 @@ public:
   // ReuseTxBufferで開放しなければならない。サボるとそのうちtx_reservedが枯渇
   // して、一切のパケットの送信ができなくなるよ♪
   NetDevRingBuffer _tx_reserved;
-  NetDevFunctionalRingBuffer _tx_buffered;
+  NetDevRingBuffer _tx_buffered;
 
   void ReuseRxBuffer(Packet *packet) {
     kassert(_rx_reserved.Push(packet));
@@ -92,13 +98,14 @@ public:
     }
   }
   bool TransmitPacket(Packet *packet) {
+    PrepareTxPacket(packet);
     return _tx_buffered.Push(packet);
   }
   bool ReceivePacket(Packet *&packet) {
-    return _rx_buffered.Pop(packet);
+    return _rx_filtered.Pop(packet);
   }
-  void SetReceiveCallback(int apicid, const Function &func) {
-    _rx_buffered.SetFunction(apicid, func);
+  void SetReceiveCallback(int cpuid, const GenericFunction &func) {
+    _rx_filtered.SetFunction(cpuid, func);
   }
 
   void InitTxPacketBuffer() {
@@ -126,16 +133,46 @@ public:
     strncpy(_name, name, kNetworkInterfaceNameLen);
   }
   const char *GetName() { return _name; }
-
+  void SetHandleMethod(HandleMethod method) {
+    switch(method) {
+    case HandleMethod::kInt: {
+      ChangeHandleMethodToInt();
+      break;
+    }
+    case HandleMethod::kPolling: {
+      ChangeHandleMethodToPolling();
+      break;
+    }
+    default: {
+      kassert(false);
+    }
+    }
+    _method = method;
+  }
+  HandleMethod GetHandleMethod() {
+    return _method;
+  }
   void SetProtocolStack(ProtocolStack *stack) { _ptcl_stack = stack; }
- protected:
-  NetDev() {}
+protected:
+  NetDev() {
+    ClassFunction<NetDev> packet_filter;
+    packet_filter.Init(this, &NetDev::FilterRxPacket, nullptr);
+    _rx_buffered.SetFunction(2, packet_filter);
+  }
+  virtual void ChangeHandleMethodToPolling() = 0;
+  virtual void ChangeHandleMethodToInt() = 0;
   SpinLock _lock;
-  volatile LinkStatus _status = LinkStatus::Down;
+  PollingFunc _polling;
+  volatile LinkStatus _status = LinkStatus::kDown;
+  HandleMethod _method = HandleMethod::kInt;
 
-  // IP address
-  uint32_t _ipAddr = 0;
- private:
+  // filter received packet
+  virtual void FilterRxPacket(void *p) = 0;
+
+  // preprocess on packet before transmit
+  virtual void PrepareTxPacket(NetDev::Packet *packet) = 0;
+
+private:
   static const uint32_t kNetworkInterfaceNameLen = 8;
   // network interface name
   char _name[kNetworkInterfaceNameLen];
@@ -147,13 +184,13 @@ public:
 class NetDevCtrl {
 public:
   struct NetDevInfo {
-    DevEthernet *device;
+    NetDev *device;
     ProtocolStack *ptcl_stack;
   };
 
   NetDevCtrl() {}
 
-  bool RegisterDevice(DevEthernet *dev, const char *name = kDefaultNetworkInterfaceName);
+  bool RegisterDevice(NetDev *dev, const char *name = kDefaultNetworkInterfaceName);
   NetDevInfo *GetDeviceInfo(const char *name = kDefaultNetworkInterfaceName);
 
 protected:

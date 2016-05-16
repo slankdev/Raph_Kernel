@@ -25,7 +25,7 @@
 
 #include <stdint.h>
 #include <raph.h>
-#include <acpi.h>
+#include <raph_acpi.h>
 
 #ifndef __UNIT_TEST__
 struct MADT {
@@ -68,9 +68,9 @@ class Regs;
 class ApicCtrlInterface {
 public:
   virtual void Setup() = 0;
-  virtual volatile uint8_t GetApicId() = 0;
+  virtual volatile int GetCpuId() = 0;
   virtual int GetHowManyCpus() = 0;
-  virtual void SetupTimer(uint32_t irq) = 0;
+  virtual void SetupTimer() = 0;
   virtual void StartTimer() = 0;
   virtual void StopTimer() = 0;
 };
@@ -91,15 +91,20 @@ public:
         kassert(_ctrlAddr == ctrlAddr);
       }
     }
-    int Cpunum() {
+    int GetCpuId() {
       if(_ctrlAddr == nullptr) {
         return 0;
       }
       for(int n = 0; n < _ncpu; n++) {
-        if(_ctrlAddr[kRegId] >> 24 == _apicIds[n])
+        if(_ctrlAddr[kRegId] >> 24 == _apicIds[n]) {
           return n;
+        }
       }
       return 0;
+    }
+    uint8_t GetApicIdFromCpuId(int cpuid) {
+      kassert(cpuid >= 0 && cpuid < _ncpu);
+      return _apicIds[cpuid];
     }
     // start local APIC respond to specified index with apicId
     void Start(uint8_t apicId, uint64_t entryPoint);
@@ -113,7 +118,7 @@ public:
       _ctrlAddr[kRegEoi] = 0;
     }
     void SendIpi(uint8_t destid);
-    void SetupTimer(uint32_t irq);
+    void SetupTimer();
     void StartTimer() {
       volatile uint32_t tmp = _ctrlAddr[kRegTimerInitCnt];
       _ctrlAddr[kRegTimerInitCnt] = tmp;
@@ -121,6 +126,12 @@ public:
     }
     void StopTimer() {
       _ctrlAddr[kRegLvtTimer] |= kRegLvtMask;
+    }
+    static uint64_t GetMsiAddr(uint8_t dest_lapicid) {
+      return kMsiAddrRegReserved | (static_cast<uint64_t>(dest_lapicid) << kMsiAddrRegDestOffset);
+    }
+    static uint16_t GetMsiData(uint8_t vector) {
+      return kRegIcrTriggerModeEdge | kDeliverModeLowest | vector;
     }
   private:
     volatile uint32_t *_ctrlAddr = nullptr;
@@ -171,6 +182,10 @@ public:
     static const uint32_t kRegIcrDestShorthandAllIncludeSelf = 2 << 18;
     static const uint32_t kRegIcrDestShorthandAllExcludeSelf = 3 << 18;
 
+    // see intel64 manual vol3 Figure 10-14 (Layout of the MSI Message Address Register)
+    static const uint64_t kMsiAddrRegReserved = 0xFEE00000;
+    static const int kMsiAddrRegDestOffset = 12;
+
     // see intel MPspec Appendix B.5
     static const uint32_t kIoRtc = 0x70;
 
@@ -192,6 +207,7 @@ public:
       _reg[kData] = data;
     }
     void SetReg(uint32_t *reg) {
+      kassert(_reg == nullptr);
       _reg = reg;
     }
     bool SetupInt(uint32_t irq, uint8_t lapicid, uint8_t vector) {
@@ -264,11 +280,15 @@ public:
     _lapic.SendIpi(destid);
   }
 
-  virtual volatile uint8_t GetApicId() override {
-    return _lapic.GetApicId();
+  volatile uint8_t GetApicIdFromCpuId(int cpuid) {
+    return _lapic.GetApicIdFromCpuId(cpuid);
   }
 
-  bool IsBootupAll() {
+  virtual volatile int GetCpuId() override {
+    return _lapic.GetCpuId();
+  }
+
+  volatile bool IsBootupAll() {
     return _all_bootup;
   }
 
@@ -276,8 +296,8 @@ public:
     return _lapic._ncpu;
   }
 
-  virtual void SetupTimer(uint32_t irq) override {
-    _lapic.SetupTimer(irq);
+  virtual void SetupTimer() override {
+    _lapic.SetupTimer();
   }
 
   virtual void StartTimer() override {
@@ -293,9 +313,9 @@ protected:
   volatile bool _all_bootup = false;
 
 private:
-  static void TmrCallback(Regs *rs) {
+  static void TmrCallback(Regs *rs, void *arg) {
   }
-  static void IpiCallback(Regs *rs) {
+  static void IpiCallback(Regs *rs, void *arg) {
   }
 
   Lapic _lapic;

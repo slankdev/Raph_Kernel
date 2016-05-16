@@ -20,28 +20,28 @@
  * 
  */
 
-#include "../acpi.h"
-#include "../mem/physmem.h"
-#include "../global.h"
-#include "../tty.h"
+#include <raph_acpi.h>
+#include <mem/physmem.h>
+#include <global.h>
+#include <tty.h>
 #include "pci.h"
 
 #include "nic/intel/em/em.h"
 #include "nic/intel/em/lem.h"
 
-void PCICtrl::_Init() {
+void PciCtrl::_Init() {
   _mcfg = acpi_ctrl->GetMCFG();
   if (_mcfg == nullptr) {
-    gtty->Printf("s", "[PCI] error: could not find MCFG table.\n");
+    gtty->Printf("s", "[Pci] error: could not find MCFG table.\n");
     return;
   }
   for (int i = 0; i * sizeof(MCFGSt) < _mcfg->header.Length - sizeof(ACPISDTHeader); i++) {
     if (i == 1) {
-      gtty->Printf("s", "[PCI] info: multiple MCFG tables.\n");
+      gtty->Printf("s", "[Pci] info: multiple MCFG tables.\n");
       break;
     }
     if (_mcfg->list[i].ecam_base >= 0x100000000) {
-      gtty->Printf("s", "[PCI] error: ECAM base addr is not exist in low 4GB of memory\n");
+      gtty->Printf("s", "[Pci] error: ECAM base addr is not exist in low 4GB of memory\n");
       continue;
     }
     _base_addr = p2v(_mcfg->list[i].ecam_base);
@@ -53,14 +53,13 @@ void PCICtrl::_Init() {
         }
         uint16_t did = ReadReg<uint16_t>(j, k, 0, kDeviceIDReg);
         bool mf = ReadReg<uint8_t>(j, k, 0, kHeaderTypeReg) & kHeaderTypeRegFlagMultiFunction;
-
-        InitPCIDevices<E1000, lE1000, DevPCI>(vid, did, j, k, mf);
+        InitPciDevices<E1000, lE1000, DevPci>(vid, did, j, k, mf);
       }
     }
   }
 }
 
-uint16_t PCICtrl::FindCapability(uint8_t bus, uint8_t device, uint8_t func, CapabilityId id) {
+uint16_t PciCtrl::FindCapability(uint8_t bus, uint8_t device, uint8_t func, CapabilityId id) {
   if ((ReadReg<uint16_t>(bus, device, func, kStatusReg) | kStatusRegFlagCapListAvailable) == 0) {
     return 0;
   }
@@ -89,4 +88,25 @@ uint16_t PCICtrl::FindCapability(uint8_t bus, uint8_t device, uint8_t func, Capa
     }
     ptr = ReadReg<uint8_t>(bus, device, func, ptr + kCapRegNext);
   }
+}
+
+bool PciCtrl::SetMsi(uint8_t bus, uint8_t device, uint8_t func, uint64_t addr, uint16_t data) {
+  uint16_t offset = FindCapability(bus, device, func, CapabilityId::kMsi);
+  if (offset == 0) {
+    return false;
+  }
+  uint16_t control = ReadReg<uint16_t>(bus, device, func, offset + kMsiCapRegControl);
+  
+  if (control & kMsiCapRegControlAddr64Flag) {
+    // addr 64bit
+    WriteReg<uint32_t>(bus, device, func, offset + kMsiCapRegMsgAddr, static_cast<uint32_t>(addr));
+    WriteReg<uint32_t>(bus, device, func, offset + kMsiCapReg64MsgUpperAddr, static_cast<uint32_t>(addr >> 32));
+    WriteReg<uint16_t>(bus, device, func, offset + kMsiCapReg64MsgData, static_cast<uint16_t>(data));
+  } else {
+    kassert(addr < 0x100000000);
+    WriteReg<uint32_t>(bus, device, func, offset + kMsiCapRegMsgAddr, static_cast<uint32_t>(addr));
+    WriteReg<uint16_t>(bus, device, func, offset + kMsiCapReg32MsgData, static_cast<uint16_t>(data));
+  }
+  WriteReg<uint16_t>(bus, device, func, offset + kMsiCapRegControl, control | kMsiCapRegControlMsiEnableFlag);
+  return true;
 }

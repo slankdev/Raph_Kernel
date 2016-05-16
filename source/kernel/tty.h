@@ -27,6 +27,9 @@
 #include <stdint.h>
 #include <spinlock.h>
 #include <queue.h>
+#include <task.h>
+#include <global.h>
+#include <apic.h>
 
 class Tty {
  public:
@@ -44,7 +47,20 @@ class Tty {
     String *str = String::New();
     Printf_sub1(*str, args...);
     str->Exit();
-    _queue.Push(str);
+    switch (task_ctrl->GetState(apic_ctrl->GetCpuId())) {
+    case TaskCtrl::TaskQueueState::kNotRunning: {
+      Locker locker(_lock);
+      PrintString(str);
+      break;
+    }
+    case TaskCtrl::TaskQueueState::kRunning: { 
+      _queue.Push(str);
+      break;
+    }
+    default: {
+      kassert(false);
+    }
+    }
   }
   // use to print error message
   template<class... T>
@@ -55,22 +71,12 @@ class Tty {
     Printf_sub1(str, args...);
     str.Exit();
     Locker locker(_lock);
-    int tx = _cx;
-    int ty = _cy;
-    _cx = _rcx;
-    _cy = _rcy;
     PrintString(&str);
-    _rcx = _cx;
-    _rcy = _cy;
-    _cx = tx;
-    _cy = ty;    
   }
  protected:
   virtual void Write(uint8_t c) = 0;
   int _cx = 0;
   int _cy = 0;
-  int _rcx = 0;
-  int _rcy = 0;
  private:
   struct String {
     enum class Type {
@@ -87,7 +93,22 @@ class Tty {
       offset = 0;
       next = nullptr;
     }
-    void Write(uint8_t c);
+    void Write(const uint8_t c) {
+      if (offset == length) {
+        if (next == nullptr) {
+          if (type == Type::kQueue) {
+            String *s = New();
+            next = s;
+            next->Write(c);
+          }
+        } else {
+          next->Write(c);
+        }
+      } else {
+        str[offset] = c;
+        offset++;
+      }
+    }
     void Exit() {
       Write('\0');
     }
@@ -111,7 +132,7 @@ class Tty {
     Printf_sub2(str, arg1, arg2);
     Printf_sub1(str, args...);
   }
-  
+
   void Printf_sub2(String &str, const char *arg1, const char arg2) {
     if (strcmp(arg1, "c")) {
       Printf_sub2(str, "s", "(invalid format)");
@@ -161,7 +182,52 @@ class Tty {
     void Printf_sub2(String &str, const T1& /*arg1*/, const T2& /*arg2*/) {
     Printf_sub2(str, "s", "(invalid format)");
   }
-  void PrintInt(String &str, const char *arg1, const int arg2);
+  void PrintInt(String &str, const char *arg1, const int arg2) {
+    if (!strcmp(arg1, "d")) {
+      if (arg2 < 0) {
+        str.Write('-');
+      }
+      unsigned int _arg2 = (arg2 < 0) ? -arg2 : arg2;
+      unsigned int i = _arg2;
+      int digit = 0;
+      while (i >= 10) {
+        i /= 10;
+        digit++;
+      }
+      for (int j = digit; j >= 0; j--) {
+        i = 1;
+        for (int k = 0; k < j; k++) {
+          i *= 10;
+        }
+        unsigned int l = _arg2 / i;
+        str.Write(l + '0');
+        _arg2 -= l * i;
+      }
+    } else if (!strcmp(arg1, "x")) {
+      unsigned int _arg2 = arg2;
+      unsigned int i = _arg2;
+      int digit = 0;
+      while (i >= 16) {
+        i /= 16;
+        digit++;
+      }
+      for (int j = digit; j >= 0; j--) {
+        i = 1;
+        for (int k = 0; k < j; k++) {
+          i *= 16;
+        }
+        unsigned int l = _arg2 / i;
+        if (l < 10) {
+          str.Write(l + '0');
+        } else if (l < 16) {
+          str.Write(l - 10 + 'A');
+        }
+        _arg2 -= l * i;
+      }
+    } else {
+      Printf_sub2(str, "s", "(invalid format)");
+    }
+  } 
   void PrintString(String *str);
   FunctionalQueue _queue;
   SpinLock _lock;

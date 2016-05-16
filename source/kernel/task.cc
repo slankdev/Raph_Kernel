@@ -21,111 +21,131 @@
  */
 
 #include <task.h>
+#include <apic.h>
 
 void TaskCtrl::Setup() {
   int cpus = apic_ctrl->GetHowManyCpus();
   _task_struct = reinterpret_cast<TaskStruct *>(virtmem_ctrl->Alloc(sizeof(TaskStruct) * cpus));
+  Task *t;
   for (int i = 0; i < cpus; i++) {
-    new(&_task_struct[i].lock) SpinLock;
+    new(&_task_struct[i]) TaskStruct;
 
-    Task *t = reinterpret_cast<Task *>(virtmem_ctrl->Alloc(sizeof(Task)));
-    new(&t->func) Function;
-    t->next = nullptr;
+    t = virtmem_ctrl->New<Task>();
+    t->_status = Task::Status::kGuard;
+    t->_next = nullptr;
+    t->_prev = nullptr;
 
     _task_struct[i].top = t;
     _task_struct[i].bottom = t;
 
-    t = reinterpret_cast<Task *>(virtmem_ctrl->Alloc(sizeof(Task)));
-    new(&t->func) Function;
-    t->next = nullptr;
+    t = virtmem_ctrl->New<Task>();
+    t->_status = Task::Status::kGuard;
+    t->_next = nullptr;
+    t->_prev = nullptr;
 
     _task_struct[i].top_sub = t;
     _task_struct[i].bottom_sub = t;
 
-    _task_struct[i].state = TaskCtrlState::kNotRunningTask;
+    _task_struct[i].state = TaskQueueState::kNotRunning;
   }
 }
 
-void TaskCtrl::Remove(int apicid, const Function &func) {
-  Locker locker(_task_struct[apicid].lock);
-  Task *t = _task_struct[apicid].top;
-  while(t->next != nullptr) {
-    if (t->next->func.Equal(func)) {
-      Task *tt = t->next;
-      t->next = t->next->next;
-      if (tt == _task_struct[apicid].bottom) {
-        kassert(tt->next == nullptr);
-        _task_struct[apicid].bottom = t;
+void TaskCtrl::Remove(int cpuid, Task *task) {
+  kassert(task->_status != Task::Status::kGuard);
+  Locker locker(_task_struct[cpuid].lock);
+  switch(task->_status) {
+  case Task::Status::kWaitingInQueue: {
+    Task *next = task->_next;
+    Task *prev = task->_prev;
+
+    task->_next = nullptr;
+    task->_prev = nullptr;
+
+    kassert(prev != nullptr);
+    prev->_next = next;
+
+    if (next == nullptr) {
+      if (task == _task_struct[cpuid].bottom) {
+        _task_struct[cpuid].bottom = prev;
+      } else if (task == _task_struct[cpuid].bottom_sub) {
+        _task_struct[cpuid].bottom_sub = prev;
+      } else {
+        kassert(false);
       }
-      virtmem_ctrl->Free(reinterpret_cast<virt_addr>(tt));
-      //        _allocator.Free(tt);
-    } else {
-      t = t->next;
     }
+
+    prev->_next = next;
+    next->_prev = prev;
   }
-  t = _task_struct[apicid].top_sub;
-  while(t->next != nullptr) {
-    if (t->next->func.Equal(func)) {
-      Task *tt = t->next;
-      t->next = t->next->next;
-      if (tt == _task_struct[apicid].bottom_sub) {
-        kassert(tt->next == nullptr);
-        _task_struct[apicid].bottom_sub = t;
-      }
-      virtmem_ctrl->Free(reinterpret_cast<virt_addr>(tt));
-      //        _allocator.Free(tt);
-    } else {
-      t = t->next;
-    }
+  case Task::Status::kRunning:
+  case Task::Status::kOutOfQueue: {
+    break;
   }
+  default:{
+    kassert(false);
+  }
+  }
+  task->_status = Task::Status::kOutOfQueue;  
 }
 
 void TaskCtrl::Run() {
-  apic_ctrl->SetupTimer(32 + 10);
+  apic_ctrl->SetupTimer();
   while(true) {
     apic_ctrl->StopTimer();
-    Function f;
-    int apicid = apic_ctrl->GetApicId();
-    kassert(_task_struct[apicid].state == TaskCtrlState::kNotRunningTask);
-    _task_struct[apicid].state = TaskCtrlState::kRunningTask;
+    int cpuid = apic_ctrl->GetCpuId();
+    kassert(_task_struct[cpuid].state == TaskQueueState::kNotRunning);
+    _task_struct[cpuid].state = TaskQueueState::kRunning;
     while (true){
       Task *t;
       {
-        Locker locker(_task_struct[apicid].lock);
-        Task *tt = _task_struct[apicid].top;
-        t = tt->next;
+        Locker locker(_task_struct[cpuid].lock);
+        Task *tt = _task_struct[cpuid].top;
+        t = tt->_next;
         if (t == nullptr) {
-          kassert(tt == _task_struct[apicid].bottom);
+          kassert(tt == _task_struct[cpuid].bottom);
           break;
         }
-        tt->next = t->next;
-        if (t->next == nullptr) {
-          kassert(_task_struct[apicid].bottom == t);
-          _task_struct[apicid].bottom = tt;
+        tt->_next = t->_next;
+        if (t->_next == nullptr) {
+          kassert(_task_struct[cpuid].bottom == t);
+          _task_struct[cpuid].bottom = tt;
+        } else {
+          t->_next->_prev = tt;
         }
+        kassert(t->_status == Task::Status::kWaitingInQueue);
+        t->_status = Task::Status::kRunning;
+        t->_next = nullptr;
+        t->_prev = nullptr;
       }
-      t->func.Execute();
-      if (t->type == TaskType::kPolling) {
-        Locker locker(_task_struct[apicid].lock);
-        _task_struct[apicid].bottom_sub->next = t;
-        t->next = nullptr;
-        _task_struct[apicid].bottom_sub = t;
-      } else {
-        virtmem_ctrl->Free(reinterpret_cast<virt_addr>(t));
-        //      _allocator.Free(t);
+      
+      t->_func.Execute();
+
+      if (t->_status == Task::Status::kRunning) {
+        Locker locker(_task_struct[cpuid].lock);
+        t->_status = Task::Status::kWaitingInQueue;
+        _task_struct[cpuid].bottom_sub->_next = t;
+        t->_next = nullptr;
+        t->_prev = _task_struct[cpuid].bottom_sub;
+        _task_struct[cpuid].bottom_sub = t;
       }
     }
-    Locker locker(_task_struct[apicid].lock);
-    Task *tmp;
-    tmp = _task_struct[apicid].top;
-    _task_struct[apicid].top = _task_struct[apicid].top_sub;
-    _task_struct[apicid].top_sub = tmp;
+    {
+      Locker locker(_task_struct[cpuid].lock);
+      Task *tmp;
+      tmp = _task_struct[cpuid].top;
+      _task_struct[cpuid].top = _task_struct[cpuid].top_sub;
+      _task_struct[cpuid].top_sub = tmp;
 
-    tmp = _task_struct[apicid].bottom;
-    _task_struct[apicid].bottom = _task_struct[apicid].bottom_sub;
-    _task_struct[apicid].bottom_sub = tmp;
+      tmp = _task_struct[cpuid].bottom;
+      _task_struct[cpuid].bottom = _task_struct[cpuid].bottom_sub;
+      _task_struct[cpuid].bottom_sub = tmp;
 
-    _task_struct[apicid].state = TaskCtrlState::kNotRunningTask;
+      _task_struct[cpuid].state = TaskQueueState::kNotRunning;
+
+      if (_task_struct[cpuid].top->_next != nullptr) {
+        continue;
+      }
+    }
     apic_ctrl->StartTimer();
 #ifndef __UNIT_TEST__
     asm volatile("hlt");
@@ -133,12 +153,19 @@ void TaskCtrl::Run() {
   }
 }
 
-void TaskCtrl::RegisterSub(int apicid, const Function &func, TaskType type) {
-  Task *task = reinterpret_cast<Task *>(virtmem_ctrl->Alloc(sizeof(Task)));//_allocator.Alloc();
-  task->func = func;
-  task->next = nullptr;
-  task->type = type;
-  Locker locker(_task_struct[apicid].lock);
-  _task_struct[apicid].bottom->next = task;
-  _task_struct[apicid].bottom = task;
+void TaskCtrl::Register(int cpuid, Task *task) {
+  if (cpuid < 0 || cpuid >= apic_ctrl->GetHowManyCpus()) {
+    return;
+  }
+  kassert(task->_status == Task::Status::kOutOfQueue);
+  Locker locker(_task_struct[cpuid].lock);
+  task->_next = nullptr;
+  task->_status = Task::Status::kWaitingInQueue;
+  _task_struct[cpuid].bottom_sub->_next = task;
+  task->_prev = _task_struct[cpuid].bottom_sub;
+  _task_struct[cpuid].bottom_sub = task;
+}
+
+Task::~Task() {
+  kassert(_status == Status::kOutOfQueue);
 }

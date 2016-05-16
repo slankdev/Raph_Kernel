@@ -17,27 +17,9 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  *
  * Author: Liva
- *
+ * 
  */
 
-#ifndef __RAPH_KERNEL_E1000_BEM_H__
-#define __RAPH_KERNEL_E1000_BEM_H__
+#include "taskqueue.h"
 
-#include <dev/eth.h>
-
-class bE1000 : public DevEthernet {
-public:
- bE1000(uint8_t bus, uint8_t device, bool mf) : DevEthernet(bus, device, mf) {}
-};
-
-struct adapter;
-
-struct BsdDriver {
-  bE1000 *parent;
-  struct adapter *adapter;
-};
-
-typedef BsdDriver *device_t;
-
-#endif /* __RAPH_KERNEL_E1000_BEM_H__ */
-
+struct taskqueue *taskqueue_fast = nullptr;
