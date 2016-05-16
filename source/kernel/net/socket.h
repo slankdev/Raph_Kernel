@@ -194,6 +194,7 @@ private:
   void SetSessionType(uint8_t type) { _type = type; }
   void SetSequenceNumber(uint32_t seq) { _seq = seq; }
   void SetAcknowledgeNumber(uint32_t ack) { _ack = ack; }
+  void Clear();
 
   uint64_t GetRetransmissionTimeout() {
     // simple algorithm of RTO calculation
