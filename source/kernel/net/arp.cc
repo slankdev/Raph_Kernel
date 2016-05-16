@@ -72,7 +72,7 @@ bool ArpFilterPacket(uint8_t *packet, uint16_t op, uint8_t *smacaddr, uint32_t s
 
 bool RegisterIpAddress(uint8_t *packet) {
   ArpPacket * volatile arp = reinterpret_cast<ArpPacket*>(packet);
-  return arp_table->Add(arp->proto_saddr, arp->hw_saddr);
+  return arp_table->Add(ntohl(arp->proto_saddr), arp->hw_saddr);
 }
 
 void ArpGetSourceMacAddress(uint8_t *buffer, uint8_t *packet) {
@@ -119,6 +119,7 @@ bool ArpTable::Add(uint32_t ipaddr, uint8_t *macaddr) {
     index = Probe(index);
   }
   // new record
+  _table[index].ipaddr = ipaddr;
   memcpy(_table[index].macaddr, macaddr, 6);
   return true;
 }

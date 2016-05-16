@@ -680,16 +680,15 @@ int32_t ArpSocket::ReceivePacket(uint16_t type, uint32_t *spa, uint8_t *sha) {
     return kErrorInvalidPacketOnWire;
   }
 
-  uint8_t *p = packet->buf + sizeof(EthHeader) + kOperationOffset;
-  op = ntohs(*reinterpret_cast<uint16_t*>(p));
+  op = ArpGetOperation(packet->buf + sizeof(EthHeader));
 
   // handle received ARP request/reply
   uint32_t offset_arp = sizeof(EthHeader);
 
   switch(op) {
-    case kOpArpReply:
-      RegisterIpAddress(packet->buf + sizeof(EthHeader));
     case kOpArpRequest:
+      RegisterIpAddress(packet->buf + sizeof(EthHeader));
+    case kOpArpReply:
       if(spa) *spa = ArpGetSourceIpAddress(packet->buf + offset_arp);
       if(sha) ArpGetSourceMacAddress(sha, packet->buf + offset_arp);
       break;
