@@ -419,7 +419,7 @@ int32_t Socket::Connect() {
 
 int32_t Socket::Close() {
   if(_state == kStateSynSent || _state == kStateListen) {
-    _state = kStateClosed;
+    Clear();
     return 0;
   }
 
@@ -477,9 +477,7 @@ int32_t Socket::Close() {
       rval = Transmit(buffer, 0, false);
       
       if(rval >= 0) {
-        _established = false;
-        _state = kStateClosed;
-        _seq = 0; _ack = 0;
+        Clear();
       } else {
         return rval;  // failure
       }
@@ -532,14 +530,23 @@ int32_t Socket::CloseAck() {
       // check acknowledge number
       if(TcpGetAcknowledgeNumber(tcp) != _seq + 1) return kErrorInvalidPacketOnWire;
 
-      _state = kStateClosed;
-      _established = false;
-      _seq = 0; _ack = 0;
-    } 
+      Clear();
+    } else {
+      return kErrorNoPacketOnWire;
+    }
   }
  
   return 0;
 }
+
+void Socket::Clear() {
+  _state = kStateClosed;
+  _established = false;
+  _seq = 0;
+  _ack = 0;
+  _dport = 0;
+}
+
 /*
  * UdpSocket
  */
