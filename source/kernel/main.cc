@@ -384,7 +384,7 @@ extern "C" int main_of_others() {
     Function func;
     func.Init([](void *){
         kassert(g_channel != nullptr);
-        //        g_channel->Read(0, 1);
+        g_channel->Read(0, 1);
       }, nullptr);
     tt4.Init(func);
     tt4.SetHandler(10);

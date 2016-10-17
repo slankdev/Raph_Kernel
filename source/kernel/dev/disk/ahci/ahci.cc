@@ -2973,6 +2973,9 @@ void AhciChannel::DonePacket(PacketAtaio *ataio) {
   } else {
     if (ataio->cmd.command == ATA_READ_DMA) {
       memcpy(ataio->ptr.GetRawPtr(), ataio->data_ptr, ataio->dxfer_len);
+      for(int i = 0; i < 512; i++) {
+        gtty->Cprintf("%x ", ataio->ptr.GetRawPtr()[i]);
+      }
     }
     doneq.Push(ataio);
   }
